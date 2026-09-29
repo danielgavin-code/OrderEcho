@@ -1,0 +1,16 @@
+# OrderEcho agent (FIX initiator) configuration.
+# Sessions mirror the emulator's config/orderecho_multi.yaml, seen from our side.
+sessions:
+  - { id: emu42,  fix_version: FIX.4.2, sender_comp_id: AGENT, target_comp_id: ORDERECHO, host: 127.0.0.1, port: 9878, heartbeat_sec: 30, reset_on_logon: true }
+  - { id: emu44,  fix_version: FIX.4.4, sender_comp_id: AGENT, target_comp_id: ORDERECHO, host: 127.0.0.1, port: 9878, heartbeat_sec: 30, reset_on_logon: true }
+  - { id: strict, fix_version: FIX.4.2, sender_comp_id: AGENT, target_comp_id: STRICTBRK, host: 127.0.0.1, port: 9879, heartbeat_sec: 30, reset_on_logon: true }
+
+# Every session starts from these; any of them may be overridden per session.
+defaults: { logon_timeout_sec: 10, logout_timeout_sec: 10, heartbeat_grace_pct: 20, reconnect: false, reconnect_interval_sec: 5,
+            heartbeat_mismatch: warn,     # warn (keep our HeartBtInt) | refuse
+            include_handl_inst: true,     # 21=1 on FIX 4.4 D/G (always sent on 4.2)
+            clordid_prefix: OE }          # ClOrdIDs are <prefix>-<run_id>-<n>; add account: X for tag 1
+
+storage: { seqnum_dir: data/seqnums, msgstore_dir: data/msgstore, evidence_dir: data/evidence }
+
+logging: { log_dir: logs, fix_delimiter: "|", engine_level: INFO, console: true }
