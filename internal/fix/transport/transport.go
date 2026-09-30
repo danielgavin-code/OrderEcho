@@ -50,6 +50,11 @@ type Options struct {
 	// OnEvidence, if set, is called (under the session lock) for every
 	// Evidence action, after it has been recorded. Keep it quick.
 	OnEvidence func(session.Evidence)
+	// OnWire, if set, sees every framed message as it crosses the wire:
+	// inbound before the session handles it ("in"), outbound as written
+	// ("out"). Called under the session lock. The cert runner uses it to see
+	// messages the session deliberately ignores (PossDup replays).
+	OnWire func(direction string, msg *codec.Message)
 }
 
 // Snapshot is a consistent view of the session for callers outside the loop.
@@ -300,6 +305,9 @@ func (in *Initiator) handleItem(item codec.Item) {
 		in.opts.Evidence.Discarded(in.id, it)
 		in.runActionsLogged(func() []session.Action { return in.sess.OnDiscarded(it) })
 	case *codec.Message:
+		if in.opts.OnWire != nil {
+			in.opts.OnWire("in", it)
+		}
 		in.opts.FixLog.Inbound(it)
 		in.opts.Evidence.Message(evidence.KindIn, in.id, 0, it, "", false)
 		in.runActionsLogged(func() []session.Action { return in.sess.OnMessage(it) })
@@ -369,6 +377,9 @@ func (in *Initiator) write(s session.Send) {
 	comment := s.Detail
 	if s.Injected && s.Detail != "" {
 		comment = "injected: " + s.Detail
+	}
+	if in.opts.OnWire != nil && s.Msg != nil {
+		in.opts.OnWire("out", s.Msg)
 	}
 	in.opts.FixLog.Outbound(s.Seq, s.MsgType, s.Raw, comment)
 	in.opts.Evidence.Message(evidence.KindOut, in.id, s.Seq, s.Msg, comment, s.Injected)
@@ -496,4 +507,12 @@ func (in *Initiator) Locked(fn func()) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	fn()
+}
+
+// Rearm clears the "stop" flag Logout/Stop set, so Run can be called again
+// on the same session (the cert runner reconnects between cases).
+func (in *Initiator) Rearm() {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.stopping = false
 }

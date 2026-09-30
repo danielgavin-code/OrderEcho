@@ -207,6 +207,24 @@ func BuildChain(messages []*Message, clOrdID, orderID string) *Chain {
 	if seed == "" {
 		seed = orderID
 	}
+	if kept, split := splitDuplicates(ordered, orderID); split {
+		ordered = kept
+		wantedIDs, wantedOrders = map[string]bool{}, map[string]bool{}
+		if clOrdID != "" {
+			wantedIDs[clOrdID] = true
+		}
+		for _, m := range ordered {
+			for _, id := range identityIDs(m) {
+				wantedIDs[id] = true
+			}
+			if own, ok := orderIDOf(m); ok {
+				wantedOrders[own] = true
+			}
+		}
+		if orderID != "" {
+			wantedOrders[orderID] = true
+		}
+	}
 	c := &Chain{Seed: seed, Steps: markReplays(ordered), IDs: wantedIDs, OrderIDs: wantedOrders}
 	c.Checks = RunChecks(c)
 	return c
@@ -300,4 +318,103 @@ func markReplays(messages []*Message) []Step {
 		steps = append(steps, Step{Message: m, Replay: replay})
 	}
 	return steps
+}
+
+// splitDuplicates separates the answer to a duplicate request from the order
+// whose ClOrdID it reused (A3 3.2). The chain's established OrderID is the
+// first one its reports carry. A later request that reuses a ClOrdID already
+// used by an earlier request of the chain is a duplicate; an ExecutionReport
+// rejecting it (39=8) on a *different* OrderID, and any 35=3/35=j answering
+// it by RefSeqNum, form their own chain together with the duplicate request.
+//
+// It returns the messages to keep for this chain and whether anything was
+// split off. Seeded with the duplicate's OrderID it returns the duplicate's
+// chain; otherwise the original's.
+//
+// Deliberate difference (to be fixed on the Python side later): the Python
+// chain builder keeps them together, so the original order FAILs
+// order_id_constant.
+func splitDuplicates(ordered []*Message, seedOrderID string) ([]*Message, bool) {
+	primary := ""
+	for _, m := range ordered {
+		if mt := m.MsgType(); mt == MsgExecutionReport || mt == MsgCancelReject {
+			if id, ok := orderIDOf(m); ok {
+				primary = id
+				break
+			}
+		}
+	}
+	if primary == "" {
+		return ordered, false
+	}
+	used := map[string]int{}
+	var dupReqs []*Message
+	for _, m := range ordered {
+		if !requestTypes[m.MsgType()] || m.PossDup() {
+			continue
+		}
+		id := m.Value(TagClOrdID)
+		if id == "" {
+			continue
+		}
+		if used[id] > 0 {
+			dupReqs = append(dupReqs, m)
+		}
+		used[id]++
+	}
+	if len(dupReqs) == 0 {
+		return ordered, false
+	}
+	split := map[*Message]bool{}
+	splitOrders := map[string]bool{}
+	for i, m := range ordered {
+		if m.MsgType() != MsgExecutionReport || m.Value(TagOrdStatus) != "8" {
+			continue
+		}
+		own, ok := orderIDOf(m)
+		if !ok || own == primary {
+			continue
+		}
+		// The latest duplicate request with this ClOrdID sent before it.
+		var req *Message
+		for _, d := range dupReqs {
+			if d.Value(TagClOrdID) == m.Value(TagClOrdID) && d.Index < m.Index && indexOf(ordered, d) < i {
+				req = d
+			}
+		}
+		if req == nil {
+			continue
+		}
+		split[m], split[req] = true, true
+		splitOrders[own] = true
+		if seq, ok := req.Seq(); ok {
+			for _, r := range ordered {
+				if mt := r.MsgType(); mt == MsgReject || mt == MsgBusinessReject {
+					if ref, ok := intOfDec(r.Get(TagRefSeqNum)); ok && ref == seq && !sentBySameSide(r, req) {
+						split[r] = true
+					}
+				}
+			}
+		}
+	}
+	if len(split) == 0 {
+		return ordered, false
+	}
+	wantSplit := seedOrderID != "" && splitOrders[seedOrderID]
+	var out []*Message
+	for _, m := range ordered {
+		if split[m] == wantSplit {
+			out = append(out, m)
+		}
+	}
+	return out, true
+}
+
+func indexOf(list []*Message, m *Message) int {
+	for i, x := range list {
+		if x == m {
+			return i
+		}
+	}
+	return -1
 }

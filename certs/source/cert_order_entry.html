@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Entry Certification — FIXReader</title>
+  <meta name="description" content="FIX order entry certification checklist — environment, session, order flow, cancel/replace, rejects, and recovery scenarios.">
+  <link rel="canonical" href="{{ canonical_url }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+  {{ theme_vars | safe }}
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%230f1c2e'/%3E%3Ctext x='16' y='23' font-family='Arial%2Csans-serif' font-size='22' font-weight='800' fill='%233b82f6' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
+  <style>
+    html, body { height: 100%; }
+    body { display: flex; flex-direction: column; }
+    .ml-shell { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+    .ml-left  { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0; border-right: 1px solid var(--border); }
+    .ml-nav-scroll { flex: 1; overflow-y: auto; padding: 12px 0 40px; }
+    .ml-right { flex: 1; min-width: 0; overflow-y: auto; }
+    a.ml-msg-item { text-decoration: none; }
+  </style>
+</head>
+<body>
+
+<!-- ════ TOP NAV ════ -->
+<nav class="top-nav" aria-label="Main navigation">
+  <div class="nav-inner">
+    <a href="/" class="nav-logo">
+      <div class="logo-mark"><span class="logo-fix">FIX</span><span class="logo-reader">Reader</span></div>
+      <div class="logo-tagline">Understand FIX. Solve problems. Move faster.</div>
+    </a>
+    <ul class="nav-links" role="list">
+      <li><a href="/tools" class="nav-item">Tools</a></li>
+      <li><a href="/tools/cert-scripts" class="nav-item active">Cert Scripts</a></li>
+      <li><a href="/troubleshooting" class="nav-item">Troubleshooting</a></li>
+      <li><a href="/message-library" class="nav-item">FIX Specs</a></li>
+      <li><a href="/exchange-specs" class="nav-item">Exchange Specs</a></li>
+      <li><a href="/resources" class="nav-item">Resources</a></li>
+    </ul>
+    {% if theme_info.name != 'default' %}
+    <div class="nav-end">
+      <div class="nav-theme">
+        <span class="nav-theme-emoji">{{ theme_info.emoji }}</span>
+        <div class="nav-theme-text">
+          <div class="nav-theme-line1">
+            {% if theme_info.type == 'birthday' %}
+            <span class="nav-theme-label">Happy Birthday,</span>
+            <a href="/themes-admin" class="nav-theme-name">{{ theme_info.person_name }}!</a>
+            {% else %}
+            <span class="nav-theme-label">Today's Theme:</span>
+            <a href="/themes-admin" class="nav-theme-name">{{ theme_info.display_name }}</a>
+            {% endif %}
+          </div>
+          <div class="nav-theme-line2">
+            {% if theme_info.type == 'birthday' %}
+            {{ theme_info.subtitle }}{% if theme_info.wiki_url %} · <a href="{{ theme_info.wiki_url }}" class="nav-theme-wiki" target="_blank" rel="noopener">Wiki ↗</a>{% endif %}
+            {% else %}
+            {% if theme_info.date %}{{ theme_info.date }}{% if theme_info.subtitle %} · {% endif %}{% endif %}{% if theme_info.subtitle %}{{ theme_info.subtitle }}{% if theme_info.wiki_url %} · {% endif %}{% endif %}{% if theme_info.wiki_url %}<a href="{{ theme_info.wiki_url }}" class="nav-theme-wiki" target="_blank" rel="noopener">Wiki ↗</a>{% endif %}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    <div class="nav-search" id="nav-search-wrap" role="search">
+      <div class="nav-search-inner">
+        <svg class="nav-search-icon" viewBox="0 0 16 16" fill="none">
+          <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <input type="search" class="nav-search-input" id="nav-search-input" aria-label="Search tags and messages" placeholder="Search tags, messages..." autocomplete="off" spellcheck="false">
+      </div>
+      <div class="nav-search-dropdown" id="nav-search-dropdown" style="display:none"></div>
+    </div>
+  </div>
+</nav>
+
+<!-- ════ PILL BAR ════ -->
+<div class="ml-version-bar">
+  <a class="ml-version-pill active" href="/cert/order-entry">Order Entry</a>
+  <a class="ml-version-pill" href="/cert/drop-copy">Drop Copy</a>
+  <a class="ml-version-pill" href="/cert/allocation">Allocation</a>
+</div>
+
+<!-- ════ SHELL ════ -->
+<div class="ml-shell">
+
+  <!-- LEFT SIDEBAR -->
+  <nav class="ml-left" aria-label="Site navigation">
+    <div class="ml-nav-scroll">
+
+      <div class="ml-cat-hdr">Tools</div>
+      <a href="/" class="ml-msg-item">
+        <span class="ml-msg-code">DCO</span><span>FIX Decoder</span>
+      </a>
+      <a href="/compare" class="ml-msg-item">
+        <span class="ml-msg-code">CMP</span><span>Compare Messages</span>
+      </a>
+      <a href="/tools/message-builder" class="ml-msg-item">
+        <span class="ml-msg-code">BLD</span><span>Message Builder</span>
+      </a>
+      <a href="/tools/tag-validator" class="ml-msg-item">
+        <span class="ml-msg-code">VAL</span><span>Tag Validator</span>
+      </a>
+
+      <div class="ml-cat-hdr">Cert Scripts</div>
+      <a href="/cert/order-entry" class="ml-msg-item active" aria-current="page">
+        <span class="ml-msg-code">ORD</span><span>Order Entry</span>
+      </a>
+      <a href="/cert/drop-copy" class="ml-msg-item">
+        <span class="ml-msg-code">DRP</span><span>Drop Copy</span>
+      </a>
+      <a href="/cert/allocation" class="ml-msg-item">
+        <span class="ml-msg-code">ALC</span><span>Allocation</span>
+      </a>
+
+      <div class="ml-cat-hdr">Troubleshooting</div>
+      <a href="/troubleshooting/network" class="ml-msg-item">
+        <span class="ml-msg-code">NET</span><span>Network &amp; Connectivity</span>
+      </a>
+      <a href="/troubleshooting/sequence-numbers" class="ml-msg-item">
+        <span class="ml-msg-code">SEQ</span><span>Sequence Number Issues</span>
+      </a>
+      <a href="/troubleshooting/logon" class="ml-msg-item">
+        <span class="ml-msg-code">LOG</span><span>Logon Failures</span>
+      </a>
+      <a href="/troubleshooting/fill-reconciliation" class="ml-msg-item">
+        <span class="ml-msg-code">FIL</span><span>Fill Reconciliation</span>
+      </a>
+      <a href="/troubleshooting/rejects" class="ml-msg-item">
+        <span class="ml-msg-code">REJ</span><span>Order Rejects</span>
+      </a>
+      <a href="/troubleshooting/latency" class="ml-msg-item">
+        <span class="ml-msg-code">LAT</span><span>Latency &amp; Timing</span>
+      </a>
+      <a href="/troubleshooting/duplicate-orders" class="ml-msg-item">
+        <span class="ml-msg-code">DUP</span><span>Duplicate Orders</span>
+      </a>
+      <a href="/troubleshooting/gap-fill" class="ml-msg-item">
+        <span class="ml-msg-code">GAP</span><span>Gap Fill &amp; Resend</span>
+      </a>
+
+      <div class="ml-cat-hdr">FIX Specs</div>
+      <a href="/message-library" class="ml-msg-item">
+        <span class="ml-msg-code">4.2</span><span>FIX 4.2</span>
+      </a>
+      <a href="/message-library" class="ml-msg-item">
+        <span class="ml-msg-code">4.4</span><span>FIX 4.4</span>
+      </a>
+      <a href="/message-library" class="ml-msg-item">
+        <span class="ml-msg-code">5.0</span><span>FIX 5.0</span>
+      </a>
+
+      <div class="ml-cat-hdr">Exchange Specs</div>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">XNYS</span><span>NYSE</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">XNAS</span><span>NASDAQ</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">ARCX</span><span>NYSE Arca</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">XCBO</span><span>CBOE BZX</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">EDGX</span><span>EDGX</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">EDGA</span><span>EDGA</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">IEXG</span><span>IEX</span>
+      </a>
+
+      <div class="ml-cat-hdr">Resources</div>
+      <a href="/resources" class="ml-msg-item">
+        <span class="ml-msg-code">RES</span><span>Resources</span>
+      </a>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <main class="ml-right" id="main-content">
+    <div class="ck-wrap">
+
+      <!-- Header -->
+      <div class="ck-hdr">
+        <div class="ck-hdr-left">
+          <h1 class="ck-title">Order Entry Certification</h1>
+          <div class="ck-subtitle">FIX 4.2 · US Equity Venues · Exchange Connectivity Certification</div>
+        </div>
+      </div>
+
+      <!-- Download banner -->
+      <div class="ck-dl-banner">
+        <div class="ck-dl-banner-text">
+          <strong>Prefer working offline?</strong> Download the Excel version of this certification checklist.
+        </div>
+        <a href="#" class="ck-dl-link" onclick="exportExcel(); return false;">↓ Download Excel Checklist</a>
+      </div>
+
+      <!-- Progress -->
+      <div class="ck-progress-section">
+        <div class="ck-progress-row">
+          <div class="ck-progress-bar-wrap">
+            <div class="ck-progress-bar"><div class="ck-progress-fill" id="progressFill" style="width:0%"></div></div>
+          </div>
+          <div class="ck-progress-label" id="progressLabel">0 / 0 Complete</div>
+          <div class="ck-stat-pills" id="statPills"></div>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="ck-filters">
+        <input type="text" class="ck-search" id="searchInput" aria-label="Search tasks" placeholder="Search tasks…" oninput="applyFilters()">
+        <select class="ck-filter-sel" id="sectionFilter" aria-label="Filter by section" onchange="applyFilters()">
+          <option value="">All Sections</option>
+        </select>
+        <select class="ck-filter-sel" id="statusFilter" aria-label="Filter by status" onchange="applyFilters()">
+          <option value="">All Statuses</option>
+          <option value="not-started">Not Started</option>
+          <option value="in-progress">In Progress</option>
+          <option value="pass">Pass</option>
+          <option value="fail">Fail</option>
+          <option value="blocked">Blocked</option>
+          <option value="na">N/A</option>
+        </select>
+        <select class="ck-filter-sel" id="levelFilter" aria-label="Filter by level" onchange="applyFilters()">
+          <option value="">All Levels</option>
+          <option value="basic">Self-Verified</option>
+          <option value="intermediate">Exchange Required</option>
+          <option value="advanced">Coordinated</option>
+        </select>
+        <select class="ck-filter-sel" id="reqFilter" aria-label="Filter by requirement type" onchange="applyFilters()">
+          <option value="">All Types</option>
+          <option value="true">Required</option>
+          <option value="false">Optional</option>
+        </select>
+        <span class="ck-filter-count" id="filterCount"></span>
+      </div>
+
+      <!-- Table -->
+      <div class="ck-table-wrap">
+        <table class="ck-table" id="certTable">
+          <colgroup>
+            <col class="ck-col-cb">
+            <col class="ck-col-step">
+            <col class="ck-col-area">
+            <col class="ck-col-task">
+            <col class="ck-col-req">
+            <col class="ck-col-owner">
+            <col class="ck-col-status">
+            <col class="ck-col-notes">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="th-center">✓</th>
+              <th>Step</th>
+              <th>Area</th>
+              <th>Task</th>
+              <th>Req</th>
+              <th>Owner</th>
+              <th>Status</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="certTbody"></tbody>
+        </table>
+        <div class="ck-empty" id="emptyState" style="display:none">No tasks match the current filters.</div>
+      </div>
+
+    </div><!-- /ck-wrap -->
+  </main>
+
+</div><!-- /ml-shell -->
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <span class="footer-logo"><span class="logo-fix">FIX</span><span class="logo-reader">Reader</span></span>
+    <div class="footer-links">
+      <a href="mailto:feedback@fixreader.org?subject=FIXReader.org%20Feedback" class="footer-link">Feedback</a>
+    </div>
+    <span class="footer-copy">© 2026 FIXReader.org</span>
+  </div>
+</footer>
+
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script>
+// ── Checklist data ────────────────────────────────────────────────────────────
+
+const SECTIONS = [
+  { id: 's1', num: 'ENV', name: 'Environment & Connectivity' },
+  { id: 's2', num: 'SES', name: 'Session Configuration' },
+  { id: 's3', num: 'MSG', name: 'Message Flow' },
+  { id: 's4', num: 'ORD', name: 'Order Entry' },
+  { id: 's5', num: 'LCY', name: 'Order Lifecycle' },
+  { id: 's6', num: 'CXL', name: 'Cancel / Replace' },
+  { id: 's7', num: 'REJ', name: 'Reject Scenarios' },
+  { id: 's8', num: 'RCV', name: 'Recovery & Advanced' },
+  { id: 's9', num: 'SGN', name: 'Final Certification Sign-Off' },
+];
+
+// level: 'basic' | 'intermediate' | 'advanced'
+// req: true = Required, false = Optional
+const ROWS = [
+  // ── Environment & Connectivity
+  { section:'s1', step:'1.1', area:'Environment', task:'Obtain certification environment IP address, port, and documentation package from exchange', level:'basic', req:true },
+  { section:'s1', step:'1.2', area:'Network',     task:'Verify TCP connectivity to cert host — telnet or port-scan on configured FIX port', level:'basic', req:true },
+  { section:'s1', step:'1.3', area:'Network',     task:'Confirm outbound firewall rules permit FIX port egress from trading host', level:'basic', req:true },
+  { section:'s1', step:'1.4', area:'Network',     task:'Confirm inbound rules if exchange pushes responses on a different IP/port range', level:'basic', req:false },
+  { section:'s1', step:'1.5', area:'Credentials', task:'Collect SenderCompID, TargetCompID, session password, and sequence reset policy', level:'basic', req:true },
+  { section:'s1', step:'1.6', area:'Credentials', task:'Confirm SSL/TLS versus clear-text transport requirement with exchange onboarding team', level:'basic', req:true },
+  { section:'s1', step:'1.7', area:'Environment', task:'Identify UAT vs. production environment — confirm cert runs against UAT endpoint', level:'basic', req:true },
+
+  // ── Session Configuration
+  { section:'s2', step:'2.1', area:'Config', task:'Set BeginString (Tag 8) = FIX.4.2 in session engine configuration', level:'basic', req:true },
+  { section:'s2', step:'2.2', area:'Config', task:'Set SenderCompID (49) and TargetCompID (56) exactly as provisioned — case sensitive', level:'basic', req:true },
+  { section:'s2', step:'2.3', area:'Config', task:'Configure HeartBtInt (108) per exchange spec — typically 30 or 60 seconds', level:'basic', req:true },
+  { section:'s2', step:'2.4', area:'Config', task:'Set EncryptMethod (98) = 0 (None) — TLS handled at transport layer', level:'basic', req:true },
+  { section:'s2', step:'2.5', area:'Config', task:'Set ResetOnLogon (141) = Y for certification sessions to ensure clean sequence start', level:'basic', req:false },
+  { section:'s2', step:'2.6', area:'Config', task:'Confirm sequence number file storage path and ensure clean state before cert', level:'basic', req:true },
+  { section:'s2', step:'2.7', area:'Config', task:'Verify ResetSeqNumFlag (141) behavior — exchange must accept flag=Y on reconnect', level:'intermediate', req:true },
+
+  // ── Message Flow
+  { section:'s3', step:'3.1', area:'Session', task:'Send Logon (35=A) — verify exchange returns Logon acknowledgment', level:'basic', req:true },
+  { section:'s3', step:'3.2', area:'Session', task:'Verify bidirectional Heartbeat (35=0) exchange at configured HeartBtInt interval', level:'basic', req:true },
+  { section:'s3', step:'3.3', area:'Session', task:'Send Test Request (35=1) with TestReqID — verify matching Heartbeat response', level:'basic', req:true },
+  { section:'s3', step:'3.4', area:'Session', task:'Verify exchange initiates Test Request and client responds with correct Heartbeat', level:'basic', req:true },
+  { section:'s3', step:'3.5', area:'Recovery', task:'Trigger Resend Request (35=2) — verify exchange replays with PossDupFlag=Y on replayed messages', level:'intermediate', req:true },
+  { section:'s3', step:'3.6', area:'Recovery', task:'Test Sequence Reset (35=4) with GapFillFlag=Y — verify sequence gap is bridged cleanly', level:'intermediate', req:true },
+  { section:'s3', step:'3.7', area:'Session', task:'Send Logout (35=5) — verify graceful session termination and acknowledgment', level:'basic', req:true },
+  { section:'s3', step:'3.8', area:'Recovery', task:'Disconnect without Logout — reconnect and verify gap fill / sequence recovery', level:'intermediate', req:true },
+
+  // ── Order Entry
+  { section:'s4', step:'4.1', area:'Market', task:'New Order Single — Market Buy: OrdType=1, Side=1, no Price tag', level:'basic', req:true },
+  { section:'s4', step:'4.2', area:'Market', task:'New Order Single — Market Sell: OrdType=1, Side=2, no Price tag', level:'basic', req:true },
+  { section:'s4', step:'4.3', area:'Limit',  task:'New Order Single — Limit Buy: OrdType=2, Side=1, Price (44) required', level:'basic', req:true },
+  { section:'s4', step:'4.4', area:'Limit',  task:'New Order Single — Limit Sell: OrdType=2, Side=2, Price (44) required', level:'basic', req:true },
+  { section:'s4', step:'4.5', area:'TIF',    task:'IOC order — TimeInForce=3: immediate fill or cancel, no resting on book', level:'basic', req:true },
+  { section:'s4', step:'4.6', area:'TIF',    task:'FOK order — TimeInForce=4: full fill or kill, verify all-or-nothing behavior', level:'basic', req:true },
+  { section:'s4', step:'4.7', area:'TIF',    task:'Day order — TimeInForce=0: default behavior, expires at session close', level:'basic', req:true },
+  { section:'s4', step:'4.8', area:'TIF',    task:'GTC order — TimeInForce=1: verify order persists across session restart', level:'intermediate', req:false },
+  { section:'s4', step:'4.9', area:'TIF',    task:'GTX order — TimeInForce=5: good-till-extended-hours if supported by venue', level:'intermediate', req:false },
+
+  // ── Order Lifecycle
+  { section:'s5', step:'5.1', area:'ExecType', task:'Receive Pending New (ExecType=A, OrdStatus=A) — before exchange acknowledges', level:'basic', req:false },
+  { section:'s5', step:'5.2', area:'ExecType', task:'Receive New Acknowledgement (ExecType=0, OrdStatus=0) — order accepted on book', level:'basic', req:true },
+  { section:'s5', step:'5.3', area:'ExecType', task:'Receive Partial Fill (ExecType=1, OrdStatus=1) — verify LastQty, LastPx, LeavesQty, CumQty', level:'basic', req:true },
+  { section:'s5', step:'5.4', area:'ExecType', task:'Receive Full Fill (ExecType=2, OrdStatus=2) — verify LeavesQty=0, CumQty=OrderQty', level:'basic', req:true },
+  { section:'s5', step:'5.5', area:'ExecType', task:'Receive Done For Day (ExecType=3, OrdStatus=3) — end-of-session partial IOC behavior', level:'intermediate', req:false },
+  { section:'s5', step:'5.6', area:'ExecType', task:'Receive Expired (ExecType=C, OrdStatus=C) — GTD or IOC order not executed', level:'intermediate', req:false },
+  { section:'s5', step:'5.7', area:'ExecID',  task:'Verify ExecID (17) is unique across all Execution Reports for the session', level:'intermediate', req:true },
+  { section:'s5', step:'5.8', area:'ExecID',  task:'Verify AvgPx (6) and CumQty (14) accumulate correctly across multiple partial fills', level:'intermediate', req:true },
+
+  // ── Cancel / Replace
+  { section:'s6', step:'6.1', area:'Cancel',  task:'Send Order Cancel Request (35=F) — reference correct ClOrdID (11) and OrigClOrdID (41)', level:'basic', req:true },
+  { section:'s6', step:'6.2', area:'Cancel',  task:'Receive Cancel Acknowledgement (35=8, ExecType=4, OrdStatus=4) — order removed from book', level:'basic', req:true },
+  { section:'s6', step:'6.3', area:'Cancel',  task:'Receive Cancel Reject (35=9) — attempt to cancel a fully-filled order (CxlRejReason=0)', level:'intermediate', req:true },
+  { section:'s6', step:'6.4', area:'Cancel',  task:'Receive Cancel Reject — Too Late to Cancel (CxlRejReason=1) — order pending fill', level:'intermediate', req:true },
+  { section:'s6', step:'6.5', area:'Replace', task:'Send Order Cancel/Replace (35=G) — change Price only, preserve quantity and side', level:'intermediate', req:true },
+  { section:'s6', step:'6.6', area:'Replace', task:'Send Order Cancel/Replace (35=G) — change quantity up (queue position behavior varies by venue)', level:'intermediate', req:true },
+  { section:'s6', step:'6.7', area:'Replace', task:'Send Order Cancel/Replace (35=G) — change quantity down (typically preserves queue priority)', level:'intermediate', req:false },
+  { section:'s6', step:'6.8', area:'Replace', task:'Receive Pending Replace (OrdStatus=E) then Replace ACK — verify OrdStatus transitions', level:'intermediate', req:false },
+
+  // ── Reject Scenarios
+  { section:'s7', step:'7.1', area:'Session Reject',   task:'Send NewOrderSingle with missing required tag (e.g., no Symbol 55) — expect Session Reject (35=3)', level:'basic', req:true },
+  { section:'s7', step:'7.2', area:'Session Reject',   task:'Send message with invalid MsgType (35) — expect Session Reject with RefTagID', level:'basic', req:true },
+  { section:'s7', step:'7.3', area:'Business Reject',  task:'Send order with invalid Symbol (55) — expect ExecType=8 or Business Reject (35=j)', level:'basic', req:true },
+  { section:'s7', step:'7.4', area:'Business Reject',  task:'Send order with invalid Price — negative, zero, or out-of-range value', level:'basic', req:true },
+  { section:'s7', step:'7.5', area:'Business Reject',  task:'Send order with invalid Side (54) value — expect reject with RefTagID=54', level:'basic', req:true },
+  { section:'s7', step:'7.6', area:'Business Reject',  task:'Send order with invalid Account (1) — expect reject if account validation is enabled', level:'basic', req:false },
+  { section:'s7', step:'7.7', area:'Business Reject',  task:'Send duplicate ClOrdID (11) — same ID as a live or recently-filled order', level:'intermediate', req:true },
+  { section:'s7', step:'7.8', area:'Business Reject',  task:'Verify Business Message Reject (35=j) structure: RefSeqNum, RefMsgType, BusinessRejectRefID, Text', level:'intermediate', req:true },
+
+  // ── Recovery & Advanced
+  { section:'s8', step:'8.1', area:'Recovery', task:'Simulate mid-session disconnect — reconnect and verify Resend Request / gap fill sequence', level:'intermediate', req:true },
+  { section:'s8', step:'8.2', area:'Recovery', task:'Resend order messages with PossDupFlag=Y — verify exchange deduplicates (does not re-execute)', level:'advanced', req:true },
+  { section:'s8', step:'8.3', area:'Recovery', task:'Verify exchange replays Execution Reports with PossDupFlag=Y on resend', level:'advanced', req:true },
+  { section:'s8', step:'8.4', area:'Recovery', task:'Test Resend Request arriving while an Execution Report is mid-stream — verify ordering', level:'advanced', req:false },
+  { section:'s8', step:'8.5', area:'Recovery', task:'Verify no duplicate ExecIDs appear when exchange replays Execution Reports', level:'advanced', req:true },
+  { section:'s8', step:'8.6', area:'Recovery', task:'Test client restart with sequence number reset — verify ResetSeqNumFlag=Y on Logon accepted', level:'intermediate', req:true },
+  { section:'s8', step:'8.7', area:'Recovery', task:'Test exchange restart scenario — reconnect, gap fill, confirm open orders still live', level:'advanced', req:false },
+
+  // ── Final Sign-Off
+  { section:'s9', step:'9.1', area:'Sign-Off', task:'Confirm all Required tests have status = Pass before submitting for certification', level:'basic', req:true },
+  { section:'s9', step:'9.2', area:'Sign-Off', task:'Document any exchange-specific behavior deviations from FIX 4.2 spec', level:'basic', req:true },
+  { section:'s9', step:'9.3', area:'Sign-Off', task:'Obtain written certification approval from exchange onboarding / certification team', level:'basic', req:true },
+  { section:'s9', step:'9.4', area:'Sign-Off', task:'File certification approval email in internal tracking system with date and venue name', level:'basic', req:true },
+  { section:'s9', step:'9.5', area:'Sign-Off', task:'Share certification results with compliance and operations teams per internal policy', level:'basic', req:false },
+  { section:'s9', step:'9.6', area:'Sign-Off', task:'Schedule production cutover date and confirm with exchange go-live team', level:'basic', req:false },
+];
+
+// ── Level display maps ────────────────────────────────────────────────────────
+
+const LEVEL_DISPLAY = {
+  'basic':        'Self-Verified',
+  'intermediate': 'Exchange Required',
+  'advanced':     'Coordinated',
+};
+const LEVEL_CLASS = {
+  'basic':        'ck-level-self-verified',
+  'intermediate': 'ck-level-exchange-required',
+  'advanced':     'ck-level-coordinated',
+};
+
+// ── State helpers ─────────────────────────────────────────────────────────────
+
+function sk(step, field) { return 'cert_oe_' + field + '_' + step.replace('.', '_'); }
+function getStatus(step)  { return localStorage.getItem(sk(step,'status')) || 'not-started'; }
+function getOwner(step)   { return localStorage.getItem(sk(step,'owner')) || ''; }
+function getNotes(step)   { return localStorage.getItem(sk(step,'notes')) || ''; }
+
+function saveStatus(step, val) { localStorage.setItem(sk(step,'status'), val); updateProgress(); }
+function saveOwner(step, val)  { localStorage.setItem(sk(step,'owner'), val); }
+function saveNotes(step, val)  { localStorage.setItem(sk(step,'notes'), val); }
+
+const STATUS_DOT = {
+  'not-started': '', 'in-progress': 'st-prog',
+  'pass': 'st-pass', 'fail': 'st-fail', 'blocked': 'st-block', 'na': 'st-na',
+};
+const STATUS_ROW = {
+  'not-started': '', 'in-progress': 'st-prog',
+  'pass': 'st-pass', 'fail': 'st-fail', 'blocked': 'st-block', 'na': 'st-na',
+};
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+let _issuesOnly = false;
+let _collapsedSections = {};
+
+function render() {
+  const tbody = document.getElementById('certTbody');
+  const selSec = document.getElementById('sectionFilter');
+
+  // Populate section dropdown
+  selSec.innerHTML = '<option value="">All Sections</option>';
+  SECTIONS.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id; opt.textContent = s.name;
+    selSec.appendChild(opt);
+  });
+
+  const frag = document.createDocumentFragment();
+
+  SECTIONS.forEach(sec => {
+    // Section header row
+    const collapsed = !!_collapsedSections[sec.id];
+    const hdrTr = document.createElement('tr');
+    hdrTr.className = 'ck-section-row';
+    hdrTr.dataset.section = sec.id;
+    hdrTr.innerHTML = `<td colspan="8">
+      <div class="ck-section-label">
+        <span class="ck-section-num">${esc(sec.num)}</span>
+        <span class="ck-section-name">${esc(sec.name)}</span>
+        <span class="ck-section-count" id="scount-${sec.id}"></span>
+        <span class="ck-section-chevron${collapsed ? ' collapsed' : ''}" id="chev-${sec.id}">▾</span>
+      </div>
+    </td>`;
+    hdrTr.onclick = () => toggleSection(sec.id);
+    frag.appendChild(hdrTr);
+
+    // Data rows for this section
+    const sectionRows = ROWS.filter(r => r.section === sec.id);
+    sectionRows.forEach(row => {
+      const status = getStatus(row.step);
+      const tr = document.createElement('tr');
+      tr.className = `ck-row ${STATUS_ROW[status] || ''}${collapsed ? ' hidden' : ''}`;
+      tr.dataset.section = sec.id;
+      tr.dataset.step = row.step;
+      tr.dataset.area = row.area.toLowerCase();
+      tr.dataset.level = row.level;
+      tr.dataset.req = String(row.req);
+      tr.dataset.status = status;
+      tr.dataset.task = row.task.toLowerCase();
+
+      const levelClass = LEVEL_CLASS[row.level] || 'ck-level-self-verified';
+      const levelLabel = LEVEL_DISPLAY[row.level] || row.level;
+      const reqHtml = row.req
+        ? '<span class="ck-req-badge ck-req-y">Required</span>'
+        : '<span class="ck-req-badge ck-req-n">Optional</span>';
+      const dotClass = STATUS_DOT[status] || '';
+      const statusLabel = STATUS_LABELS[status] || 'Not Started';
+
+      tr.innerHTML = `
+        <td class="ck-cb-cell">
+          <input type="checkbox" class="ck-cb" ${status === 'pass' ? 'checked' : ''}
+            onchange="onCheckbox(this,'${esc(row.step)}')">
+        </td>
+        <td><span class="ck-step">${esc(row.step)}</span></td>
+        <td><span class="ck-area" title="${esc(row.area)}">${esc(row.area)}</span></td>
+        <td class="ck-task">
+          <span class="ck-task-text" title="${esc(row.task)}">${esc(row.task)}<span class="ck-level ${levelClass}">${levelLabel}</span></span>
+        </td>
+        <td>${reqHtml}</td>
+        <td>
+          <input type="text" class="ck-owner-input" placeholder="Owner"
+            value="${esc(getOwner(row.step))}"
+            onchange="saveOwner('${esc(row.step)}',this.value)">
+        </td>
+        <td>
+          <div class="ck-status-wrap">
+            <span class="ck-status-dot ${dotClass}" id="dot-${esc(row.step.replace('.','_'))}"></span>
+            <select class="ck-status-sel" onchange="onStatus(this,'${esc(row.step)}')">
+              ${Object.entries(STATUS_LABELS).map(([v,l]) =>
+                `<option value="${v}"${v===status?' selected':''}>${l}</option>`).join('')}
+            </select>
+          </div>
+        </td>
+        <td>
+          <input type="text" class="ck-notes-input" placeholder="Notes…"
+            value="${esc(getNotes(row.step))}"
+            onchange="saveNotes('${esc(row.step)}',this.value)">
+        </td>`;
+      frag.appendChild(tr);
+    });
+  });
+
+  tbody.innerHTML = '';
+  tbody.appendChild(frag);
+  updateProgress();
+  updateSectionCounts();
+  applyFilters();
+}
+
+const STATUS_LABELS = {
+  'not-started': 'Not Started',
+  'in-progress': 'In Progress',
+  'pass':        'Pass',
+  'fail':        'Fail',
+  'blocked':     'Blocked',
+  'na':          'N/A',
+};
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── Interactions ──────────────────────────────────────────────────────────────
+
+function onCheckbox(cb, step) {
+  const val = cb.checked ? 'pass' : 'not-started';
+  saveStatus(step, val);
+  updateRowStatus(step, val);
+}
+
+function onStatus(sel, step) {
+  const val = sel.value;
+  saveStatus(step, val);
+  updateRowStatus(step, val);
+  // sync checkbox
+  const row = document.querySelector(`tr[data-step="${step}"]`);
+  if (row) {
+    const cb = row.querySelector('.ck-cb');
+    if (cb) cb.checked = (val === 'pass');
+  }
+}
+
+function updateRowStatus(step, val) {
+  const row = document.querySelector(`tr[data-step="${step}"]`);
+  if (!row) return;
+  // Update row border class
+  Object.values(STATUS_ROW).forEach(c => { if (c) row.classList.remove(c); });
+  if (STATUS_ROW[val]) row.classList.add(STATUS_ROW[val]);
+  row.dataset.status = val;
+  // Update dot
+  const dotId = 'dot-' + step.replace('.','_');
+  const dot = document.getElementById(dotId);
+  if (dot) {
+    Object.values(STATUS_DOT).forEach(c => { if (c) dot.classList.remove(c); });
+    if (STATUS_DOT[val]) dot.classList.add(STATUS_DOT[val]);
+  }
+  updateProgress();
+  updateSectionCounts();
+}
+
+function toggleSection(secId) {
+  _collapsedSections[secId] = !_collapsedSections[secId];
+  const collapsed = _collapsedSections[secId];
+  const rows = document.querySelectorAll(`tr.ck-row[data-section="${secId}"]`);
+  rows.forEach(r => r.classList.toggle('hidden', collapsed));
+  const chev = document.getElementById('chev-' + secId);
+  if (chev) chev.classList.toggle('collapsed', collapsed);
+}
+
+// ── Progress & counts ─────────────────────────────────────────────────────────
+
+function updateProgress() {
+  const total = ROWS.length;
+  let pass=0, prog=0, fail=0, block=0, ns=0;
+  ROWS.forEach(r => {
+    const s = getStatus(r.step);
+    if (s==='pass') pass++;
+    else if (s==='in-progress') prog++;
+    else if (s==='fail') fail++;
+    else if (s==='blocked') block++;
+    else ns++;
+  });
+  const done = pass;
+  const pct = total > 0 ? Math.round(done/total*100) : 0;
+
+  const fill = document.getElementById('progressFill');
+  if (fill) fill.style.width = pct + '%';
+
+  const label = document.getElementById('progressLabel');
+  if (label) label.textContent = `${done} / ${total} Complete`;
+
+  const pills = document.getElementById('statPills');
+  if (pills) {
+    pills.innerHTML = `
+      <span class="ck-stat-pill ck-pill-pass">✓ ${pass} Pass</span>
+      ${prog ? `<span class="ck-stat-pill ck-pill-prog">◎ ${prog} In Progress</span>` : ''}
+      ${fail ? `<span class="ck-stat-pill ck-pill-fail">✗ ${fail} Fail</span>` : ''}
+      ${block ? `<span class="ck-stat-pill ck-pill-block">⊘ ${block} Blocked</span>` : ''}
+      <span class="ck-stat-pill ck-pill-none">— ${ns} Not Started</span>
+    `;
+  }
+}
+
+function updateSectionCounts() {
+  SECTIONS.forEach(sec => {
+    const secRows = ROWS.filter(r => r.section === sec.id);
+    const done = secRows.filter(r => getStatus(r.step) === 'pass').length;
+    const el = document.getElementById('scount-' + sec.id);
+    if (el) el.textContent = `${done} / ${secRows.length}`;
+  });
+}
+
+// ── Filters ───────────────────────────────────────────────────────────────────
+
+function applyFilters() {
+  const search  = document.getElementById('searchInput').value.toLowerCase().trim();
+  const section = document.getElementById('sectionFilter').value;
+  const status  = document.getElementById('statusFilter').value;
+  const level   = document.getElementById('levelFilter').value;
+  const req     = document.getElementById('reqFilter').value;
+
+  let visible = 0;
+  const allRows = document.querySelectorAll('tr.ck-row');
+  const sectionHasVisible = {};
+
+  allRows.forEach(tr => {
+    const sec  = tr.dataset.section;
+    const st   = tr.dataset.status;
+    const lv   = tr.dataset.level;
+    const rq   = tr.dataset.req;
+    const task = tr.dataset.task || '';
+    const step = tr.dataset.step || '';
+    const area = tr.dataset.area || '';
+
+    const matchSearch  = !search  || task.includes(search) || step.includes(search) || area.includes(search);
+    const matchSection = !section || sec === section;
+    const matchStatus  = !status  || st === status;
+    const matchLevel   = !level   || lv === level;
+    const matchReq     = !req     || rq === req;
+    const matchIssues  = !_issuesOnly || st === 'fail' || st === 'blocked';
+
+    const collapsedHidden = _collapsedSections[sec] && !search && !status && !level && !req && !_issuesOnly;
+
+    const show = matchSearch && matchSection && matchStatus && matchLevel && matchReq && matchIssues && !collapsedHidden;
+    tr.classList.toggle('hidden', !show);
+    if (show) { visible++; sectionHasVisible[sec] = true; }
+  });
+
+  // Show/hide section header rows
+  document.querySelectorAll('tr.ck-section-row').forEach(tr => {
+    const sec = tr.dataset.section;
+    const anyFilter = search || section || status || level || req || _issuesOnly;
+    if (anyFilter) {
+      tr.classList.toggle('hidden', !sectionHasVisible[sec]);
+    } else {
+      tr.classList.remove('hidden');
+    }
+  });
+
+  const total = allRows.length;
+  const countEl = document.getElementById('filterCount');
+  if (countEl) countEl.textContent = visible < total ? `${visible} of ${total} tasks` : `${total} tasks`;
+
+  document.getElementById('emptyState').style.display = visible === 0 ? 'block' : 'none';
+}
+
+function toggleIssues() {
+  _issuesOnly = !_issuesOnly;
+  document.getElementById('issuesToggle').classList.toggle('active', _issuesOnly);
+  applyFilters();
+}
+
+// ── Reset ─────────────────────────────────────────────────────────────────────
+
+function resetAll() {
+  if (!confirm('Reset all statuses, owners, and notes? This cannot be undone.')) return;
+  ROWS.forEach(r => {
+    localStorage.removeItem(sk(r.step,'status'));
+    localStorage.removeItem(sk(r.step,'owner'));
+    localStorage.removeItem(sk(r.step,'notes'));
+  });
+  render();
+}
+
+// ── Export CSV ────────────────────────────────────────────────────────────────
+
+function exportCSV() {
+  const sectionMap = {};
+  SECTIONS.forEach(s => { sectionMap[s.id] = s.name; });
+
+  const headers = ['Step','Section','Area','Task','Level','Required','Owner','Status','Notes'];
+  const dataRows = ROWS.map(r => [
+    r.step,
+    sectionMap[r.section] || '',
+    r.area,
+    r.task,
+    LEVEL_DISPLAY[r.level] || r.level,
+    r.req ? 'Required' : 'Optional',
+    getOwner(r.step),
+    STATUS_LABELS[getStatus(r.step)] || getStatus(r.step),
+    getNotes(r.step),
+  ]);
+
+  const all = [headers, ...dataRows];
+  const csv = all.map(row =>
+    row.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')
+  ).join('\r\n');
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'order_entry_certification.csv';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+// ── Export Excel ──────────────────────────────────────────────────────────────
+
+function exportExcel() {
+  if (typeof XLSX === 'undefined') {
+    alert('SheetJS not loaded yet — please try again in a moment.');
+    return;
+  }
+
+  const sectionMap = {};
+  SECTIONS.forEach(s => { sectionMap[s.id] = s.name; });
+
+  // Build data
+  const headers = ['Step', 'Section', 'Task', 'Required', 'Level', 'Owner', 'Status', 'Notes'];
+  const dataRows = ROWS.map(r => [
+    r.step,
+    sectionMap[r.section] || '',
+    r.task,
+    r.req ? 'Required' : 'Optional',
+    LEVEL_DISPLAY[r.level] || r.level,
+    getOwner(r.step),
+    STATUS_LABELS[getStatus(r.step)] || getStatus(r.step),
+    getNotes(r.step),
+  ]);
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+
+  // Column widths (characters)
+  ws['!cols'] = [
+    { wch: 8  }, // Step
+    { wch: 18 }, // Section
+    { wch: 60 }, // Task
+    { wch: 12 }, // Required
+    { wch: 18 }, // Level
+    { wch: 15 }, // Owner
+    { wch: 15 }, // Status
+    { wch: 40 }, // Notes
+  ];
+
+  // Freeze top row
+  ws['!sheetViews'] = [{ state: 'frozen', ySplit: 1, topLeftCell: 'A2' }];
+
+  // Auto-filter on header row
+  ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }) };
+
+  // Style header row
+  const hdrStyle = {
+    fill: { patternType: 'solid', fgColor: { rgb: '2255AA' } },
+    font: { bold: true, color: { rgb: 'FFFFFF' } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+  };
+  headers.forEach((_, c) => {
+    const addr = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[addr]) ws[addr].s = hdrStyle;
+  });
+
+  // Alternating row colors on data rows
+  const rowStyleWhite = {
+    fill: { patternType: 'solid', fgColor: { rgb: 'FFFFFF' } },
+    alignment: { vertical: 'center', wrapText: false },
+  };
+  const rowStyleBlue = {
+    fill: { patternType: 'solid', fgColor: { rgb: 'F0F4FA' } },
+    alignment: { vertical: 'center', wrapText: false },
+  };
+  dataRows.forEach((_, rowIdx) => {
+    const style = rowIdx % 2 === 0 ? rowStyleWhite : rowStyleBlue;
+    headers.forEach((_, c) => {
+      const addr = XLSX.utils.encode_cell({ r: rowIdx + 1, c });
+      if (ws[addr]) ws[addr].s = style;
+    });
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Order Entry Cert');
+  XLSX.writeFile(wb, 'FIXReader_OrderEntry_Certification.xlsx');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', render);
+</script>
+<script>window.FIXREADER_ALL_TAGS = {{ tag_list_json | safe }};</script>
+<script src="/static/js/search.js"></script>
+</body>
+</html>

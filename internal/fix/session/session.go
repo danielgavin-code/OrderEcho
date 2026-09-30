@@ -236,7 +236,8 @@ type Session struct {
 	pendingTestReqAt time.Time
 
 	resendOutstanding bool
-	resendGapHigh     int // 0 = unknown
+	resendGapHigh     int // 0 = unknown; the seq that revealed the gap
+	resendEnd         int // EndSeqNo of the outstanding ResendRequest
 
 	// held is the out-of-order queue: messages above next_in, by seq, kept
 	// while a ResendRequest is outstanding. processed records seqs handled
@@ -244,6 +245,9 @@ type Session struct {
 	// message we already processed as a replay is dropped, not repeated).
 	held      map[int]*codec.Message
 	processed map[int]bool
+	// consumed marks held seqs already processed (a Logon reply that arrived
+	// above next_in): when the gap closes they only advance next_in.
+	consumed map[int]bool
 
 	logonSentAt  time.Time
 	logoutSentAt time.Time
@@ -290,6 +294,7 @@ func New(cfg Config, seqStore store.SeqStore, msgStore store.MessageStore, clk c
 		resetNextLogon: cfg.ResetOnLogon,
 		held:           map[int]*codec.Message{},
 		processed:      map[int]bool{},
+		consumed:       map[int]bool{},
 	}, nil
 }
 
@@ -425,7 +430,18 @@ func (s *Session) reject(refSeq int, reason, text string) []Action {
 }
 
 func (s *Session) clearResendIfCovered() {
-	if !s.resendOutstanding || len(s.held) > 0 {
+	if !s.resendOutstanding {
+		return
+	}
+	if s.resendEnd > 0 && s.nextIn > s.resendEnd {
+		// The requested (closed) range has been delivered; anything still held
+		// beyond a further gap needs a new request (see drain).
+		s.resendOutstanding = false
+		s.resendGapHigh = 0
+		s.resendEnd = 0
+		return
+	}
+	if len(s.held) > 0 {
 		return
 	}
 	if s.resendGapHigh == 0 || s.nextIn > s.resendGapHigh {
@@ -470,11 +486,11 @@ func (s *Session) OnConnect() []Action {
 	s.state = LogonSent
 	s.lastSent, s.lastReceived = now, now
 	s.pendingTestReqID, s.pendingTestReqAt = "", time.Time{}
-	s.resendOutstanding, s.resendGapHigh = false, 0
+	s.resendOutstanding, s.resendGapHigh, s.resendEnd = false, 0, 0
 	s.logoutSentAt = time.Time{}
 	s.heartBtInt = 0
 	s.outcome = Outcome{}
-	s.held, s.processed = map[int]*codec.Message{}, map[int]bool{}
+	s.held, s.processed, s.consumed = map[int]*codec.Message{}, map[int]bool{}, map[int]bool{}
 
 	actions := []Action{Evidence{Event: "connected", Detail: "sending Logon", Level: Info}}
 	s.sentResetFlag = s.resetNextLogon
@@ -504,7 +520,7 @@ func (s *Session) OnDisconnect() []Action {
 		actions = append(actions, Evidence{Event: "held messages dropped on disconnect",
 			Detail: fmt.Sprintf("%d message(s) were still waiting behind a gap", n), Level: Warning})
 	}
-	s.held, s.processed = map[int]*codec.Message{}, map[int]bool{}
+	s.held, s.processed, s.consumed = map[int]*codec.Message{}, map[int]bool{}, map[int]bool{}
 	return append(actions, Evidence{Event: "disconnected",
 		Detail: fmt.Sprintf("next_out=%d next_in=%d", s.nextOut, s.nextIn), Level: Info})
 }
@@ -630,6 +646,10 @@ func (s *Session) onLogonReply(msg *codec.Message) []Action {
 	actions = append(actions, Evidence{Event: "logon accepted",
 		Detail: fmt.Sprintf("HeartBtInt=%d, next_in=%d next_out=%d", hb, s.nextIn, s.nextOut), Level: Info})
 	if gap {
+		// The Logon itself is processed; its seq is consumed once the range
+		// before it has been filled.
+		s.held[seq] = msg
+		s.consumed[seq] = true
 		actions = append(actions, s.requestResend(expected, seq)...)
 	}
 	return actions
@@ -642,17 +662,26 @@ func orNone(text string) string {
 	return text
 }
 
+// requestResend asks for exactly the missing range: 7=begin, 16=gapHigh-1
+// where gapHigh is the seq that revealed the gap (A3 3.1: closed range).
+// The revealing message and anything after it are held and processed in
+// order once the range is filled.
 func (s *Session) requestResend(begin, gapHigh int) []Action {
 	if s.resendOutstanding {
 		return nil
 	}
+	end := gapHigh - 1
+	if end < begin {
+		end = begin
+	}
 	s.resendOutstanding = true
 	s.resendGapHigh = gapHigh
+	s.resendEnd = end
 	actions := []Action{Evidence{Event: "resend request sent",
-		Detail: fmt.Sprintf("7=%d 16=0", begin), Level: Info}}
+		Detail: fmt.Sprintf("7=%d 16=%d", begin, end), Level: Info}}
 	return append(actions, s.send(MsgResendRequest, []codec.Field{
 		codec.F(TagBeginSeqNo, strconv.Itoa(begin)),
-		codec.F(TagEndSeqNo, "0"),
+		codec.F(TagEndSeqNo, strconv.Itoa(end)),
 	})...)
 }
 
@@ -723,22 +752,16 @@ func (s *Session) processContent(msg *codec.Message, seq int) []Action {
 	return s.dispatch(msg, msg.MsgType(), seq)
 }
 
-// drain releases held messages, in seq order, once the gap before them has
-// closed. A held message whose seq was already processed from its resend is
-// dropped. One whose seq a gap fill skipped over is processed anyway: we hold
-// the original, and a gap fill (which the counterparty may use for any admin
-// message, a TestRequest included) must not make us lose it. A held
-// SequenceReset or Logon in that position is dropped instead, since applying
-// either out of place would be wrong.
+// drain releases held messages, in seq order, once the range before them
+// has been filled. A held message whose seq has already been covered (by a
+// gap fill or a resend) is dropped: with a closed-range ResendRequest the
+// counterparty only fills what was missing, so that never loses anything it
+// meant us to see. If held messages remain behind a further gap once the
+// outstanding range is complete, a new ResendRequest goes out.
 func (s *Session) drain() []Action {
 	var actions []Action
 	for len(s.held) > 0 && (s.state == Active || s.state == LogoutSent) && !hasDisconnect(actions) {
-		low := 0
-		for seq := range s.held {
-			if low == 0 || seq < low {
-				low = seq
-			}
-		}
+		low := s.lowestHeld()
 		if low > s.nextIn {
 			break
 		}
@@ -746,29 +769,45 @@ func (s *Session) drain() []Action {
 		delete(s.held, low)
 		desc := fmt.Sprintf("35=%s seq=%d", m.MsgType(), low)
 		switch {
+		case low == s.nextIn && s.consumed[low]:
+			delete(s.consumed, low)
+			s.nextIn++
+			actions = append(actions, s.persist()...)
+			actions = append(actions, Evidence{Event: "message dequeued",
+				Detail: desc + " was already processed; its seq is now consumed", Level: Info})
 		case low == s.nextIn:
 			s.nextIn++
 			actions = append(actions, s.persist()...)
 			actions = append(actions, Evidence{Event: "message dequeued",
 				Detail: desc + " processed in sequence after the gap closed", Level: Info})
 			actions = append(actions, s.process(m, low)...)
-		case s.processed[low]:
-			actions = append(actions, Evidence{Event: "held message dropped",
-				Detail: desc + " already processed from its resend", Level: Info})
-		case m.MsgType() == MsgSequenceReset || m.MsgType() == MsgLogon:
-			actions = append(actions, Evidence{Event: "held message dropped",
-				Detail: desc + " was covered by a gap fill; not applied out of place", Level: Warning})
 		default:
-			actions = append(actions, Evidence{Event: "message dequeued",
-				Detail: desc + " was covered by a gap fill; processing the original we hold", Level: Info})
-			actions = append(actions, s.processContent(m, low)...)
+			delete(s.consumed, low)
+			actions = append(actions, Evidence{Event: "held message dropped",
+				Detail: desc + " was already covered by a gap fill or resend", Level: Warning})
 		}
 	}
+	s.clearResendIfCovered()
 	if len(s.held) == 0 {
 		s.processed = map[int]bool{}
+	} else if !s.resendOutstanding && !hasDisconnect(actions) && (s.state == Active || s.state == LogoutSent) {
+		if low := s.lowestHeld(); low > s.nextIn {
+			actions = append(actions, Evidence{Event: "seq gap detected",
+				Detail: fmt.Sprintf("held MsgSeqNum %d, expecting %d", low, s.nextIn), Level: Warning})
+			actions = append(actions, s.requestResend(s.nextIn, low)...)
+		}
 	}
-	s.clearResendIfCovered()
 	return actions
+}
+
+func (s *Session) lowestHeld() int {
+	low := 0
+	for seq := range s.held {
+		if low == 0 || seq < low {
+			low = seq
+		}
+	}
+	return low
 }
 
 // Held reports how many messages are in the out-of-order queue.
@@ -1210,4 +1249,27 @@ func (s *Session) SendResendRequest(begin, end int) ([]Action, error) {
 		codec.F(TagBeginSeqNo, strconv.Itoa(begin)),
 		codec.F(TagEndSeqNo, strconv.Itoa(end)),
 	})...), nil
+}
+
+// ResendStored sends one of our stored messages again on its original seq
+// with 43=Y and 122 (a deliberate PossDup resend, e.g. to verify the
+// counterparty deduplicates). It is recorded as injected.
+func (s *Session) ResendStored(seq int) ([]Action, error) {
+	if s.state != Active {
+		return nil, fmt.Errorf("session is %s, not ACTIVE", s.state)
+	}
+	if s.msgStore == nil {
+		return nil, fmt.Errorf("no outbound message store")
+	}
+	rec, ok := s.msgStore.Get(seq)
+	if !ok {
+		return nil, fmt.Errorf("seq %d is not in the outbound store", seq)
+	}
+	send, err := s.replayOne(rec)
+	if err != nil {
+		return nil, err
+	}
+	send.Injected = true
+	send.Detail = fmt.Sprintf("deliberate PossDup resend of seq %d", seq)
+	return []Action{Evidence{Event: "possdup resend", Detail: send.Detail, Level: Warning, Injected: true}, send}, nil
 }

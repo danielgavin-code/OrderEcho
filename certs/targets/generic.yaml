@@ -1,0 +1,4 @@
+# Any FIX counterparty. No control API: every assisted case is BLOCKED
+# ("needs counterparty action: ...") until a human attests it, and no case is
+# marked N/A up front.
+target: generic

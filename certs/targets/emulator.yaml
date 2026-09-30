@@ -1,0 +1,27 @@
+# The OrderEcho FIX emulator (../OrderEchoFixEmulator, config/orderecho_multi.yaml).
+target: orderecho-emulator
+control_api: http://127.0.0.1:8090          # present => control steps are executed
+
+# agent session id -> emulator session id, for {session} in control paths
+sessions: { emu42: agent42, emu44: agent44, strict: strict-broker }
+
+# Symbols chosen for the emulator's rules (orderecho_multi.yaml):
+#   AAPL  a-to-d-full      fills in full (market at the static/live price)
+#   ZWZZT nasdaq-test-hold acknowledged and left resting (manual fills via the control API)
+#   ZVZZT nasdaq-test-reject rejected "Unknown symbol" (103=1)
+#   KLM   k-to-m-reject    rejected by rule
+#   EFG   e-to-g-partial   40% then 10%, left working
+vars: { symbol: AAPL, limit_symbol: ZWZZT, hold_symbol: ZWZZT, invalid_symbol: ZVZZT, reject_symbol: KLM, partial_symbol: EFG }
+
+not_applicable:
+  "4.5": "Emulator supports TimeInForce Day only"
+  "4.6": "Emulator supports TimeInForce Day only"
+  "4.8": "Emulator supports TimeInForce Day only"
+  "4.9": "Emulator supports TimeInForce Day only"
+  "5.1": "Emulator never sends Pending New (150=A); it acknowledges directly with 150=0"
+  "5.5": "Emulator has no Done For Day behavior and no control endpoint for it"
+  "5.6": "Emulator never expires orders (TimeInForce Day only, no GTD/IOC)"
+  "6.4": "Emulator cannot hold an order in a pending-fill state; its too-late cancel reject (102=0, closed order) is covered by 6.3"
+  "6.8": "orderecho_multi.yaml runs the emulator with send_pending_acks: false, so it sends no Pending Replace"
+  "7.6": "Emulator does not validate Account (1)"
+  "8.7": "Emulator orders do not survive an engine restart and it has no restart endpoint"

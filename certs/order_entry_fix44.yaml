@@ -1,0 +1,8 @@
+# Order Entry Certification — the same checklist run on a FIX 4.4 session.
+# Every case is inherited from order_entry_fix42.yaml (task texts stay the
+# checklist's own words); semantic names map per version, e.g. exec_type:
+# FILL is 150=2 on 4.2 and 150=F with 39=2 on 4.4.
+extends: order_entry_fix42.yaml
+suite: order-entry-fix44
+title: Order Entry Certification — FIX 4.4 US Equities (4.2 checklist)
+fix_version: FIX.4.4

@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Epsilon is the AvgPx tolerance, as in Python (Decimal("0.0001")).
@@ -304,7 +305,29 @@ func CheckVersionRules(c *Chain) Result {
 }
 
 // 10. Every order request in the chain got some answer.
-func CheckRequestsAnswered(c *Chain) Result {
+func CheckRequestsAnswered(c *Chain) Result { return requestsAnswered(c, nil) }
+
+// RequestsAnsweredWithGrace is check 10 for live use (A3 3.3): a request
+// younger than grace at now is not yet counted as unanswered. Offline
+// analysis always uses CheckRequestsAnswered.
+func RequestsAnsweredWithGrace(c *Chain, now time.Time, grace time.Duration) Result {
+	young := func(m *Message) bool { return m.TS != nil && now.Sub(*m.TS) < grace }
+	return requestsAnswered(c, young)
+}
+
+// WithAnswerGrace returns results with requests_answered recomputed under
+// the live grace.
+func WithAnswerGrace(c *Chain, results []Result, now time.Time, grace time.Duration) []Result {
+	out := append([]Result(nil), results...)
+	for i := range out {
+		if out[i].Name == "requests_answered" {
+			out[i] = RequestsAnsweredWithGrace(c, now, grace)
+		}
+	}
+	return out
+}
+
+func requestsAnswered(c *Chain, pending func(*Message) bool) Result {
 	const name, rule = "requests_answered", "each D/F/G is answered by an ER, a cancel reject or a Reject"
 	var requests []*Message
 	for _, m := range c.Messages() {
@@ -335,6 +358,7 @@ func CheckRequestsAnswered(c *Chain) Result {
 		}
 	}
 	var unanswered []*Message
+	waiting := 0
 	for _, req := range requests {
 		if id := req.Value(TagClOrdID); id != "" && answered[id] {
 			continue
@@ -350,6 +374,10 @@ func CheckRequestsAnswered(c *Chain) Result {
 			}
 		}
 		if !hit {
+			if pending != nil && pending(req) {
+				waiting++
+				continue
+			}
 			unanswered = append(unanswered, req)
 		}
 	}
@@ -367,6 +395,9 @@ func CheckRequestsAnswered(c *Chain) Result {
 			listed = append(listed, fmt.Sprintf("35=%s seq=%s 11=%s", m.MsgType(), seq, id))
 		}
 		return Result{name, WARN, fmt.Sprintf("%d request(s) with no response in this log: %s", len(unanswered), strings.Join(listed, ", ")), rule}
+	}
+	if waiting > 0 {
+		return Result{name, PASS, fmt.Sprintf("%d request(s) answered, %d still within the answer grace", len(requests)-waiting, waiting), rule}
 	}
 	return Result{name, PASS, fmt.Sprintf("all %d request(s) answered", len(requests)), rule}
 }

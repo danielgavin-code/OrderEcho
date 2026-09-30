@@ -359,7 +359,8 @@ func TestGapOnLogonReply(t *testing.T) {
 		t.Fatalf("state %s", h.s.State())
 	}
 	rr := mustOneSend(t, acts, "2")
-	if rr.Msg.Value(7) != "3" || rr.Msg.Value(16) != "0" || rr.Seq != 6 {
+	// A3 3.1: closed range, up to the seq before the Logon reply.
+	if rr.Msg.Value(7) != "3" || rr.Msg.Value(16) != "6" || rr.Seq != 6 {
 		t.Fatalf("resend %s", rr.Msg.Pipe())
 	}
 	// logon accepted is recorded before the ResendRequest goes out.
@@ -476,7 +477,7 @@ func TestGapSendsSingleResendRequest(t *testing.T) {
 	h.active() // next_in = 2
 	acts := h.s.OnMessage(h.msg(5, "0"))
 	rr := mustOneSend(t, acts, "2")
-	if rr.Msg.Value(7) != "2" || rr.Msg.Value(16) != "0" {
+	if rr.Msg.Value(7) != "2" || rr.Msg.Value(16) != "4" { // A3 3.1: closed range
 		t.Fatal(rr.Msg.Pipe())
 	}
 	if h.s.NextIn() != 2 {
@@ -981,8 +982,12 @@ func TestHeldMessageReleasedAfterGapFill(t *testing.T) {
 	if _, ok := findEvidence(acts, "message queued"); !ok || h.s.Held() != 1 {
 		t.Fatal("not queued")
 	}
-	// Its gap fill covers 2..5 (the TestRequest is admin), NewSeqNo 6.
-	acts = h.s.OnMessage(h.msgFrom("FIX.4.2", "ORDERECHO", "AGENT", 2, "4", true, codec.F(123, "Y"), codec.F(36, "6")))
+	// We asked for 2..4 only (closed range), so its gap fill ends at 5 and
+	// the held TestRequest is processed in sequence.
+	if rr := sends(acts)[0]; rr.Msg.Value(16) != "4" {
+		t.Fatalf("resend %s", rr.Msg.Pipe())
+	}
+	acts = h.s.OnMessage(h.msgFrom("FIX.4.2", "ORDERECHO", "AGENT", 2, "4", true, codec.F(123, "Y"), codec.F(36, "5")))
 	hb := mustOneSend(t, acts, "0")
 	if hb.Msg.Value(112) != "EMU-1" {
 		t.Fatalf("heartbeat %s", hb.Msg.Pipe())
@@ -1043,18 +1048,71 @@ func TestHeldOriginalDroppedWhenReplayed(t *testing.T) {
 	}
 }
 
-func TestHeldCoveredByGapFillProcessedNotLost(t *testing.T) {
+// A3 3.1 replaces A2's "process held messages a gap fill covered": with a
+// closed-range request a fill beyond it is the counterparty's statement that
+// the seq is to be skipped, so the held copy is dropped (with evidence).
+func TestHeldCoveredByGapFillDropped(t *testing.T) {
 	h := newHarness(t, true, 1, 1)
 	h.active()
-	h.s.OnMessage(h.msg(4, "8", codec.F(17, "E-4"))) // an ER behind a gap
-	// A gapfill-mode counterparty skips over it.
+	h.s.OnMessage(h.msg(4, "8", codec.F(17, "E-4"))) // held, 7=2 16=3 requested
 	acts := h.s.OnMessage(h.msgFrom("FIX.4.2", "ORDERECHO", "AGENT", 2, "4", true, codec.F(123, "Y"), codec.F(36, "5")))
-	if len(h.app.got) != 1 || h.app.got[0].Value(17) != "E-4" {
-		t.Fatalf("held ER lost: %v", acts)
+	if len(h.app.got) != 0 {
+		t.Fatal("covered held message processed")
 	}
-	e, ok := findEvidence(acts, "message dequeued")
-	if !ok || !strings.Contains(e.Detail, "covered by a gap fill") {
-		t.Fatalf("%+v", e)
+	if e, ok := findEvidence(acts, "held message dropped"); !ok || !strings.Contains(e.Detail, "covered") {
+		t.Fatalf("%v", acts)
+	}
+	if h.s.NextIn() != 5 || h.s.Held() != 0 || h.s.ResendOutstanding() {
+		t.Fatalf("next_in %d held %d", h.s.NextIn(), h.s.Held())
+	}
+}
+
+func TestLogonGapConsumedAfterFill(t *testing.T) {
+	h := newHarness(t, false, 5, 3)
+	h.s.OnConnect()
+	h.s.OnMessage(h.logonReply(7)) // 7=3 16=6
+	h.s.OnMessage(h.msgFrom("FIX.4.2", "ORDERECHO", "AGENT", 3, "4", true, codec.F(123, "Y"), codec.F(36, "7")))
+	if h.s.NextIn() != 8 || h.s.Held() != 0 || h.s.ResendOutstanding() {
+		t.Fatalf("next_in %d held %d outstanding %v", h.s.NextIn(), h.s.Held(), h.s.ResendOutstanding())
+	}
+	acts := h.s.OnMessage(h.msg(8, "1", codec.F(112, "X")))
+	if hb := mustOneSend(t, acts, "0"); hb.Msg.Value(112) != "X" {
+		t.Fatal(hb.Msg.Pipe())
+	}
+}
+
+func TestSecondGapRequestedAfterFirstRangeFilled(t *testing.T) {
+	h := newHarness(t, true, 1, 1)
+	h.active()                                      // next_in 2
+	h.s.OnMessage(h.msg(4, "1", codec.F(112, "A"))) // RR 2..3
+	h.s.OnMessage(h.msg(9, "1", codec.F(112, "B"))) // held, no second RR yet
+	acts := h.s.OnMessage(h.msgFrom("FIX.4.2", "ORDERECHO", "AGENT", 2, "4", true, codec.F(123, "Y"), codec.F(36, "4")))
+	ss := sends(acts)
+	// 4 processed (Heartbeat A), then a new ResendRequest 5..8 for the gap before 9.
+	if len(ss) != 2 || ss[0].Msg.Value(112) != "A" || ss[1].MsgType != "2" || ss[1].Msg.Value(7) != "5" || ss[1].Msg.Value(16) != "8" {
+		t.Fatalf("%v", describeSends(ss))
+	}
+	acts = h.s.OnMessage(h.msgFrom("FIX.4.2", "ORDERECHO", "AGENT", 5, "4", true, codec.F(123, "Y"), codec.F(36, "9")))
+	if hb := mustOneSend(t, acts, "0"); hb.Msg.Value(112) != "B" || h.s.NextIn() != 10 || h.s.ResendOutstanding() {
+		t.Fatalf("%s next_in %d", hb.Msg.Pipe(), h.s.NextIn())
+	}
+}
+
+func TestResendStored(t *testing.T) {
+	h := newHarness(t, true, 1, 1)
+	h.active()
+	snd, _, _ := h.s.SendApp("D", []codec.Field{codec.F(11, "C1")})
+	h.clk.Advance(time.Second)
+	acts, err := h.s.ResendStored(snd.Seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := mustOneSend(t, acts, "D")
+	if r.Seq != snd.Seq || r.Msg.Value(43) != "Y" || r.Msg.Value(122) != snd.Msg.Value(52) || !r.Injected || h.s.NextOut() != snd.Seq+1 {
+		t.Fatalf("%s", r.Msg.Pipe())
+	}
+	if _, err := h.s.ResendStored(99); err == nil {
+		t.Fatal("missing seq accepted")
 	}
 }
 
@@ -1120,7 +1178,7 @@ func TestHeldOriginalDroppedAfterItsReplay(t *testing.T) {
 	h2.s.processed[3] = true
 	h2.s.nextIn = 4
 	acts := h2.s.drain()
-	if e, ok := findEvidence(acts, "held message dropped"); !ok || !strings.Contains(e.Detail, "already processed") {
+	if e, ok := findEvidence(acts, "held message dropped"); !ok || !strings.Contains(e.Detail, "already covered") {
 		t.Fatalf("%v", acts)
 	}
 }

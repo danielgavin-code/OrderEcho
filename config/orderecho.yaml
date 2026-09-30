@@ -9,8 +9,9 @@ sessions:
 defaults: { logon_timeout_sec: 10, logout_timeout_sec: 10, heartbeat_grace_pct: 20, reconnect: false, reconnect_interval_sec: 5,
             heartbeat_mismatch: warn,     # warn (keep our HeartBtInt) | refuse
             include_handl_inst: true,     # 21=1 on FIX 4.4 D/G (always sent on 4.2)
-            clordid_prefix: OE }          # ClOrdIDs are <prefix>-<run_id>-<n>; add account: X for tag 1
+            clordid_prefix: OE,           # ClOrdIDs are <prefix>-<run_id>-<n>; add account: X for tag 1
+            answer_grace_sec: 5 }         # live checks: requests younger than this are not yet "unanswered"
 
-storage: { seqnum_dir: data/seqnums, msgstore_dir: data/msgstore, evidence_dir: data/evidence }
+storage: { seqnum_dir: data/seqnums, msgstore_dir: data/msgstore, evidence_dir: data/evidence, certs_dir: data/certs }
 
 logging: { log_dir: logs, fix_delimiter: "|", engine_level: INFO, console: true }

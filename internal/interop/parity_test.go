@@ -346,6 +346,7 @@ func TestParityKnownDivergences(t *testing.T) {
 		line := fmt.Sprintf("%-70s go=%s py=%s [%s: go %s, py %s]", d.c.Name, g.Verdict, py[i].Verdict, d.check, gs, ps)
 		parityLog.Lock()
 		parityLog.lines = append(parityLog.lines, "  DIVERGE  "+line+" (documented, expected)")
+		parityLog.divs++
 		parityLog.Unlock()
 		if gs != d.goWant || ps != d.pyWant {
 			t.Errorf("%s: go %s=%s (want %s), python %s=%s (want %s)", d.c.Name, d.check, gs, d.goWant, d.check, ps, d.pyWant)

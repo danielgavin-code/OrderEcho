@@ -48,6 +48,8 @@ commands:
                                  replace <ClOrdID|last> QTY [PX]
                                  status | timeline <ClOrdID|last> | resend B [E]
                                  testreq | help | quit
+  cert list | show --suite F | run --suite F --target F --session ID [...]
+                               certification runner (see "orderecho cert help")
   timeline FILE... (--clordid X | --order-id X) [--json]
                                offline checks on any log (OrderEcho FIX log,
                                evidence JSONL, or raw FIX lines)
@@ -68,6 +70,8 @@ exit codes (commands that connect):
   6  timed out waiting for an order to reach a terminal state
   130 second Ctrl+C (exit without waiting)
 exit codes (timeline): 0 PASS, 1 WARN, 2 FAIL or nothing found, as the Python viewer.
+exit codes (cert run): 0 all required PASS/N/A, 5 required FAIL, 7 required BLOCKED/PENDING,
+  8 runner ERROR, 1/3/4 session failure, 2 usage.
 `)
 }
 
@@ -104,6 +108,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdSession(cmdArgs, *configPath, os.Stdin, stdout, stderr)
 	case "timeline":
 		return cmdTimeline(cmdArgs, stdout, stderr)
+	case "cert":
+		return cmdCert(cmdArgs, *configPath, stdout, stderr)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return exitOK

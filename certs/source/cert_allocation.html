@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Allocation Certification — FIXReader</title>
+  <meta name="description" content="FIX allocation certification checklist — environment, session layer, allocation instructions, acknowledgments, and advanced cancel/replace scenarios.">
+  <link rel="canonical" href="{{ canonical_url }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+  {{ theme_vars | safe }}
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%230f1c2e'/%3E%3Ctext x='16' y='23' font-family='Arial%2Csans-serif' font-size='22' font-weight='800' fill='%233b82f6' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
+  <style>
+    html, body { height: 100%; }
+    body { display: flex; flex-direction: column; }
+    .ml-shell { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+    .ml-left  { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0; border-right: 1px solid var(--border); }
+    .ml-nav-scroll { flex: 1; overflow-y: auto; padding: 12px 0 40px; }
+    .ml-right { flex: 1; min-width: 0; overflow-y: auto; }
+    a.ml-msg-item { text-decoration: none; }
+  </style>
+</head>
+<body>
+
+<!-- ════ TOP NAV ════ -->
+<nav class="top-nav" aria-label="Main navigation">
+  <div class="nav-inner">
+    <a href="/" class="nav-logo">
+      <div class="logo-mark"><span class="logo-fix">FIX</span><span class="logo-reader">Reader</span></div>
+      <div class="logo-tagline">Understand FIX. Solve problems. Move faster.</div>
+    </a>
+    <ul class="nav-links" role="list">
+      <li><a href="/tools" class="nav-item">Tools</a></li>
+      <li><a href="/tools/cert-scripts" class="nav-item active">Cert Scripts</a></li>
+      <li><a href="/troubleshooting" class="nav-item">Troubleshooting</a></li>
+      <li><a href="/message-library" class="nav-item">FIX Specs</a></li>
+      <li><a href="/exchange-specs" class="nav-item">Exchange Specs</a></li>
+      <li><a href="/resources" class="nav-item">Resources</a></li>
+    </ul>
+    {% if theme_info.name != 'default' %}
+    <div class="nav-end">
+      <div class="nav-theme">
+        <span class="nav-theme-emoji">{{ theme_info.emoji }}</span>
+        <div class="nav-theme-text">
+          <div class="nav-theme-line1">
+            {% if theme_info.type == 'birthday' %}
+            <span class="nav-theme-label">Happy Birthday,</span>
+            <a href="/themes-admin" class="nav-theme-name">{{ theme_info.person_name }}!</a>
+            {% else %}
+            <span class="nav-theme-label">Today's Theme:</span>
+            <a href="/themes-admin" class="nav-theme-name">{{ theme_info.display_name }}</a>
+            {% endif %}
+          </div>
+          <div class="nav-theme-line2">
+            {% if theme_info.type == 'birthday' %}
+            {{ theme_info.subtitle }}{% if theme_info.wiki_url %} · <a href="{{ theme_info.wiki_url }}" class="nav-theme-wiki" target="_blank" rel="noopener">Wiki ↗</a>{% endif %}
+            {% else %}
+            {% if theme_info.date %}{{ theme_info.date }}{% if theme_info.subtitle %} · {% endif %}{% endif %}{% if theme_info.subtitle %}{{ theme_info.subtitle }}{% if theme_info.wiki_url %} · {% endif %}{% endif %}{% if theme_info.wiki_url %}<a href="{{ theme_info.wiki_url }}" class="nav-theme-wiki" target="_blank" rel="noopener">Wiki ↗</a>{% endif %}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    <div class="nav-search" id="nav-search-wrap" role="search">
+      <div class="nav-search-inner">
+        <svg class="nav-search-icon" viewBox="0 0 16 16" fill="none">
+          <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <input type="search" class="nav-search-input" id="nav-search-input" aria-label="Search tags and messages" placeholder="Search tags, messages..." autocomplete="off" spellcheck="false">
+      </div>
+      <div class="nav-search-dropdown" id="nav-search-dropdown" style="display:none"></div>
+    </div>
+  </div>
+</nav>
+
+<!-- ════ PILL BAR ════ -->
+<div class="ml-version-bar">
+  <a class="ml-version-pill" href="/cert/order-entry">Order Entry</a>
+  <a class="ml-version-pill" href="/cert/drop-copy">Drop Copy</a>
+  <a class="ml-version-pill active" href="/cert/allocation">Allocation</a>
+</div>
+
+<!-- ════ SHELL ════ -->
+<div class="ml-shell">
+
+  <!-- LEFT SIDEBAR -->
+  <nav class="ml-left" aria-label="Site navigation">
+    <div class="ml-nav-scroll">
+
+      <div class="ml-cat-hdr">Tools</div>
+      <a href="/" class="ml-msg-item">
+        <span class="ml-msg-code">DCO</span><span>FIX Decoder</span>
+      </a>
+      <a href="/compare" class="ml-msg-item">
+        <span class="ml-msg-code">CMP</span><span>Compare Messages</span>
+      </a>
+      <a href="/tools/message-builder" class="ml-msg-item">
+        <span class="ml-msg-code">BLD</span><span>Message Builder</span>
+      </a>
+      <a href="/tools/tag-validator" class="ml-msg-item">
+        <span class="ml-msg-code">VAL</span><span>Tag Validator</span>
+      </a>
+
+      <div class="ml-cat-hdr">Cert Scripts</div>
+      <a href="/cert/order-entry" class="ml-msg-item">
+        <span class="ml-msg-code">ORD</span><span>Order Entry</span>
+      </a>
+      <a href="/cert/drop-copy" class="ml-msg-item">
+        <span class="ml-msg-code">DRP</span><span>Drop Copy</span>
+      </a>
+      <a href="/cert/allocation" class="ml-msg-item active" aria-current="page">
+        <span class="ml-msg-code">ALC</span><span>Allocation</span>
+      </a>
+
+      <div class="ml-cat-hdr">Troubleshooting</div>
+      <a href="/troubleshooting/network" class="ml-msg-item">
+        <span class="ml-msg-code">NET</span><span>Network &amp; Connectivity</span>
+      </a>
+      <a href="/troubleshooting/sequence-numbers" class="ml-msg-item">
+        <span class="ml-msg-code">SEQ</span><span>Sequence Number Issues</span>
+      </a>
+      <a href="/troubleshooting/logon" class="ml-msg-item">
+        <span class="ml-msg-code">LOG</span><span>Logon Failures</span>
+      </a>
+      <a href="/troubleshooting/fill-reconciliation" class="ml-msg-item">
+        <span class="ml-msg-code">FIL</span><span>Fill Reconciliation</span>
+      </a>
+      <a href="/troubleshooting/rejects" class="ml-msg-item">
+        <span class="ml-msg-code">REJ</span><span>Order Rejects</span>
+      </a>
+      <a href="/troubleshooting/latency" class="ml-msg-item">
+        <span class="ml-msg-code">LAT</span><span>Latency &amp; Timing</span>
+      </a>
+      <a href="/troubleshooting/duplicate-orders" class="ml-msg-item">
+        <span class="ml-msg-code">DUP</span><span>Duplicate Orders</span>
+      </a>
+      <a href="/troubleshooting/gap-fill" class="ml-msg-item">
+        <span class="ml-msg-code">GAP</span><span>Gap Fill &amp; Resend</span>
+      </a>
+
+      <div class="ml-cat-hdr">FIX Specs</div>
+      <a href="/message-library" class="ml-msg-item">
+        <span class="ml-msg-code">4.2</span><span>FIX 4.2</span>
+      </a>
+      <a href="/message-library" class="ml-msg-item">
+        <span class="ml-msg-code">4.4</span><span>FIX 4.4</span>
+      </a>
+      <a href="/message-library" class="ml-msg-item">
+        <span class="ml-msg-code">5.0</span><span>FIX 5.0</span>
+      </a>
+
+      <div class="ml-cat-hdr">Exchange Specs</div>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">XNYS</span><span>NYSE</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">XNAS</span><span>NASDAQ</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">ARCX</span><span>NYSE Arca</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">XCBO</span><span>CBOE BZX</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">EDGX</span><span>EDGX</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">EDGA</span><span>EDGA</span>
+      </a>
+      <a href="/exchange-specs" class="ml-msg-item">
+        <span class="ml-msg-code">IEXG</span><span>IEX</span>
+      </a>
+
+      <div class="ml-cat-hdr">Resources</div>
+      <a href="/resources" class="ml-msg-item">
+        <span class="ml-msg-code">RES</span><span>Resources</span>
+      </a>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <main class="ml-right" id="main-content">
+    <div class="ck-wrap">
+
+      <!-- Header -->
+      <div class="ck-hdr">
+        <div class="ck-hdr-left">
+          <h1 class="ck-title">Allocation Certification</h1>
+          <div class="ck-subtitle">37 tests across 5 phases · FIX 4.2 · US Equity Venues</div>
+        </div>
+      </div>
+
+      <!-- Download banner -->
+      <div class="ck-dl-banner">
+        <div class="ck-dl-banner-text">
+          <strong>Prefer working offline?</strong> Download the Excel version of this certification checklist.
+        </div>
+        <a href="#" class="ck-dl-link" onclick="exportExcel(); return false;">↓ Download Excel Checklist</a>
+      </div>
+
+      <!-- Progress -->
+      <div class="ck-progress-section">
+        <div class="ck-progress-row">
+          <div class="ck-progress-bar-wrap">
+            <div class="ck-progress-bar"><div class="ck-progress-fill" id="progressFill" style="width:0%"></div></div>
+          </div>
+          <div class="ck-progress-label" id="progressLabel">0 / 0 Complete</div>
+          <div class="ck-stat-pills" id="statPills"></div>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="ck-filters">
+        <input type="text" class="ck-search" id="searchInput" aria-label="Search tasks" placeholder="Search tasks…" oninput="applyFilters()">
+        <select class="ck-filter-sel" id="sectionFilter" aria-label="Filter by section" onchange="applyFilters()">
+          <option value="">All Sections</option>
+        </select>
+        <select class="ck-filter-sel" id="statusFilter" aria-label="Filter by status" onchange="applyFilters()">
+          <option value="">All Statuses</option>
+          <option value="not-started">Not Started</option>
+          <option value="in-progress">In Progress</option>
+          <option value="pass">Pass</option>
+          <option value="fail">Fail</option>
+          <option value="blocked">Blocked</option>
+          <option value="na">N/A</option>
+        </select>
+        <select class="ck-filter-sel" id="levelFilter" aria-label="Filter by level" onchange="applyFilters()">
+          <option value="">All Levels</option>
+          <option value="basic">Self-Verified</option>
+          <option value="intermediate">Exchange Required</option>
+          <option value="advanced">Coordinated</option>
+        </select>
+        <select class="ck-filter-sel" id="reqFilter" aria-label="Filter by requirement type" onchange="applyFilters()">
+          <option value="">All Types</option>
+          <option value="true">Required</option>
+          <option value="false">Optional</option>
+        </select>
+        <span class="ck-filter-count" id="filterCount"></span>
+      </div>
+
+      <!-- Table -->
+      <div class="ck-table-wrap">
+        <table class="ck-table" id="certTable">
+          <colgroup>
+            <col class="ck-col-cb">
+            <col class="ck-col-step">
+            <col class="ck-col-area">
+            <col class="ck-col-task">
+            <col class="ck-col-req">
+            <col class="ck-col-owner">
+            <col class="ck-col-status">
+            <col class="ck-col-notes">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="th-center">✓</th>
+              <th>Step</th>
+              <th>Area</th>
+              <th>Task</th>
+              <th>Req</th>
+              <th>Owner</th>
+              <th>Status</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="certTbody"></tbody>
+        </table>
+        <div class="ck-empty" id="emptyState" style="display:none">No tasks match the current filters.</div>
+      </div>
+
+    </div><!-- /ck-wrap -->
+  </main>
+
+</div><!-- /ml-shell -->
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <span class="footer-logo"><span class="logo-fix">FIX</span><span class="logo-reader">Reader</span></span>
+    <div class="footer-links">
+      <a href="mailto:feedback@fixreader.org?subject=FIXReader.org%20Feedback" class="footer-link">Feedback</a>
+    </div>
+    <span class="footer-copy">© 2026 FIXReader.org</span>
+  </div>
+</footer>
+
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script>
+// ── Checklist data ────────────────────────────────────────────────────────────
+
+const SECTIONS = [
+  { id: 's1', num: 'ENV', name: 'Environment & Connectivity' },
+  { id: 's2', num: 'SES', name: 'Session Layer' },
+  { id: 's3', num: 'ALI', name: 'Allocation Instruction (35=J)' },
+  { id: 's4', num: 'ACK', name: 'Allocation Acknowledgement (35=P)' },
+  { id: 's5', num: 'ADV', name: 'Advanced & Cancel/Replace' },
+];
+
+// level: 'basic' | 'intermediate' | 'advanced'
+// req: true = Required, false = Optional
+const ROWS = [
+  // ── Environment & Connectivity
+  { section:'s1', step:'1.1', area:'Environment', task:'Confirm allocation environment IP, port, SenderCompID, TargetCompID, and FIX specification document received from exchange post-trade team', level:'basic', req:true },
+  { section:'s1', step:'1.2', area:'Network',     task:'Verify TCP connectivity from clearing host to allocation session endpoint — telnet or port-scan to confirm reachability on configured FIX port', level:'basic', req:true },
+  { section:'s1', step:'1.3', area:'Config',      task:'Configure allocation FIX session in engine with dedicated SenderCompID/TargetCompID — verify no config overlap with order entry or drop copy sessions', level:'basic', req:true },
+  { section:'s1', step:'1.4', area:'Session',     task:'Send Logon (35=A) on allocation session — verify exchange acknowledges and session reaches active state', level:'basic', req:true },
+  { section:'s1', step:'1.5', area:'Session',     task:'Send Logout (35=5) on allocation session — verify clean termination and exchange acknowledgment', level:'basic', req:true },
+  { section:'s1', step:'1.6', area:'Session',     task:'Verify Heartbeat (35=0) exchange on allocation session at configured HeartBtInt interval — confirm session remains active between allocation windows', level:'basic', req:true },
+
+  // ── Session Layer
+  { section:'s2', step:'2.1', area:'Logon',       task:'Send Logon (35=A) with ResetSeqNumFlag=Y on allocation session — verify session initializes at sequence number 1', level:'basic', req:true },
+  { section:'s2', step:'2.2', area:'Logout',      task:'Send Logout (35=5) on allocation session — verify clean termination, exchange acknowledges, and no pending allocations are lost', level:'basic', req:true },
+  { section:'s2', step:'2.3', area:'Heartbeat',   task:'Verify bidirectional Heartbeat (35=0) on allocation session — send and receive at HeartBtInt, confirm TestReqID echoed correctly', level:'basic', req:true },
+  { section:'s2', step:'2.4', area:'Test Request', task:'Send Test Request (35=1) with TestReqID on allocation session — verify exchange returns matching Heartbeat with the same TestReqID value', level:'basic', req:true },
+  { section:'s2', step:'2.5', area:'Sequence',    task:'Verify allocation session sequence numbers increment independently from order entry and drop copy sessions with a separate sequence number file', level:'basic', req:true },
+  { section:'s2', step:'2.6', area:'Recovery',    task:'Trigger Resend Request (35=2) on allocation session — verify exchange replays missed Allocation Instruction Acks (35=P) with PossDupFlag (43) = Y', level:'intermediate', req:true },
+  { section:'s2', step:'2.7', area:'Recovery',    task:'Test Sequence Reset (35=4) with GapFillFlag (123) = Y on allocation session — verify sequence gap is bridged and session continuity restored', level:'intermediate', req:true },
+  { section:'s2', step:'2.8', area:'Logon',       task:'Send Logon with ResetSeqNumFlag=Y (Tag 141=Y) on reconnect — verify exchange accepts reset and allocation session initializes at sequence 1 without rejected messages', level:'basic', req:true },
+
+  // ── Allocation Instruction (35=J)
+  { section:'s3', step:'3.1', area:'Single Acct', task:'Send Allocation Instruction (35=J) with AllocTransType=0 (New) for a single account — verify exchange acknowledges with Allocation Instruction Ack (35=P) AllocStatus=0', level:'basic', req:true },
+  { section:'s3', step:'3.2', area:'Multi-Acct',  task:'Send Allocation Instruction (35=J) for multiple accounts against a single order — verify all AllocAccount/AllocShares pairs are acknowledged in the Allocation Ack', level:'basic', req:true },
+  { section:'s3', step:'3.3', area:'Qty Validate', task:'Send Allocation Instruction for a partially filled order — verify exchange validates AllocShares (Tag 80 sum) does not exceed the filled quantity on record', level:'intermediate', req:true },
+  { section:'s3', step:'3.4', area:'Multi-Fill',  task:'Send Allocation Instruction referencing multiple execution reports via multiple NoOrders (73) entries — verify each ExecID is correctly referenced and accepted', level:'basic', req:true },
+  { section:'s3', step:'3.5', area:'Qty Reject',  task:'Send Allocation Instruction where total AllocShares across all accounts does not equal filled Shares (Tag 53) — verify exchange rejects with appropriate AllocRejCode', level:'intermediate', req:true },
+  { section:'s3', step:'3.6', area:'Price Reject', task:'Send Allocation Instruction with AvgPx (Tag 6) that does not match exchange fill records — verify exchange rejects with AllocRejCode=2 (Incorrect average price)', level:'intermediate', req:true },
+  { section:'s3', step:'3.7', area:'Acct Reject', task:'Send Allocation Instruction with unknown or invalid AllocAccount (Tag 79) — verify exchange rejects with AllocRejCode=0 (Unknown account)', level:'intermediate', req:true },
+  { section:'s3', step:'3.8', area:'Buy Side',    task:'Send Allocation Instruction for a buy-side fill (Side=1) — verify AllocShares distributed correctly across accounts and exchange confirms allocation against buy fill', level:'basic', req:true },
+  { section:'s3', step:'3.9', area:'Sell Side',   task:'Send Allocation Instruction for a sell-side fill (Side=2) — verify AllocShares distributed correctly across accounts and exchange confirms allocation against sell fill', level:'basic', req:true },
+
+  // ── Allocation Acknowledgement (35=P)
+  { section:'s4', step:'4.1', area:'Accepted',    task:'Receive Allocation Instruction Ack (35=P) with AllocStatus=0 (Accepted) — verify application correctly processes acceptance and updates internal allocation status', level:'basic', req:true },
+  { section:'s4', step:'4.2', area:'Rejected',    task:'Receive Allocation Instruction Ack with AllocStatus=1 (Rejected) — verify application reads AllocRejCode (Tag 88) and Text (Tag 58) and surfaces the rejection reason', level:'intermediate', req:true },
+  { section:'s4', step:'4.3', area:'Pending',     task:'Receive Allocation Instruction Ack with AllocStatus=2 (Received, not yet processed) — verify application holds pending state and awaits final accepted or rejected status', level:'intermediate', req:true },
+  { section:'s4', step:'4.4', area:'Timeout',     task:'Simulate no Allocation Instruction Ack received within expected timeframe — verify application logs timeout and alerts operations without silently discarding the allocation', level:'intermediate', req:true },
+  { section:'s4', step:'4.5', area:'Dedup',       task:'Receive duplicate Allocation Instruction Ack with same AllocID (Tag 70) — verify application deduplicates by AllocID and does not double-process the acknowledgment', level:'intermediate', req:true },
+
+  // ── Advanced & Cancel/Replace
+  { section:'s5', step:'5.1', area:'Cancel',      task:'Send Allocation Instruction with AllocTransType=1 (Cancel) referencing original AllocID via RefAllocID (Tag 72) — verify exchange cancels original allocation and acknowledges', level:'intermediate', req:true },
+  { section:'s5', step:'5.2', area:'Replace',     task:'Send Allocation Instruction with AllocTransType=2 (Replace) referencing original AllocID via RefAllocID (Tag 72) — verify exchange replaces original allocation with new account/quantity breakdown', level:'intermediate', req:true },
+  { section:'s5', step:'5.3', area:'Cancel/Acpt', task:'Attempt to cancel an allocation already accepted by exchange — verify exchange behavior: some venues reject the cancel, others accept depending on settlement status', level:'intermediate', req:true },
+  { section:'s5', step:'5.4', area:'Give-Up',     task:'Send give-up Allocation Instruction where executing broker allocates to a prime broker account — verify ExecBroker (Tag 76) identifies the executing firm and exchange routes correctly', level:'advanced', req:true },
+  { section:'s5', step:'5.5', area:'Give-Up Ack', task:'Verify give-up allocation is acknowledged by exchange and prime broker receives the allocation on their drop copy or allocation session — requires counterparty coordination', level:'advanced', req:true },
+  { section:'s5', step:'5.6', area:'DK Trade',    task:"Send Don't Know Trade (35=Q) for a fill that cannot be matched to a known order — verify DKReason (Tag 127) is set correctly and exchange processes the DK", level:'intermediate', req:true },
+  { section:'s5', step:'5.7', area:'DK Response', task:"Receive and process exchange response to a DK message — verify Execution Report ExecType correctly indicates the DK was received and acted upon", level:'intermediate', req:true },
+  { section:'s5', step:'5.8', area:'Reconnect',   task:'Disconnect allocation session while allocations are pending acknowledgment — reconnect and verify Resend Request (35=2) recovers all missed Allocation Instruction Acks', level:'intermediate', req:true },
+  { section:'s5', step:'5.9', area:'Reconcile',   task:'Run full end-to-end reconciliation: verify total AllocShares across all accounts per AllocID equals filled quantity for each order — zero discrepancies required for sign-off', level:'advanced', req:true },
+];
+
+// ── Level display maps ────────────────────────────────────────────────────────
+
+const LEVEL_DISPLAY = {
+  'basic':        'Self-Verified',
+  'intermediate': 'Exchange Required',
+  'advanced':     'Coordinated',
+};
+const LEVEL_CLASS = {
+  'basic':        'ck-level-self-verified',
+  'intermediate': 'ck-level-exchange-required',
+  'advanced':     'ck-level-coordinated',
+};
+
+// ── State helpers ─────────────────────────────────────────────────────────────
+
+function sk(step, field) { return 'cert_alloc_' + field + '_' + step.replace('.', '_'); }
+function getStatus(step)  { return localStorage.getItem(sk(step,'status')) || 'not-started'; }
+function getOwner(step)   { return localStorage.getItem(sk(step,'owner')) || ''; }
+function getNotes(step)   { return localStorage.getItem(sk(step,'notes')) || ''; }
+
+function saveStatus(step, val) { localStorage.setItem(sk(step,'status'), val); updateProgress(); }
+function saveOwner(step, val)  { localStorage.setItem(sk(step,'owner'), val); }
+function saveNotes(step, val)  { localStorage.setItem(sk(step,'notes'), val); }
+
+const STATUS_DOT = {
+  'not-started': '', 'in-progress': 'st-prog',
+  'pass': 'st-pass', 'fail': 'st-fail', 'blocked': 'st-block', 'na': 'st-na',
+};
+const STATUS_ROW = {
+  'not-started': '', 'in-progress': 'st-prog',
+  'pass': 'st-pass', 'fail': 'st-fail', 'blocked': 'st-block', 'na': 'st-na',
+};
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+let _issuesOnly = false;
+let _collapsedSections = {};
+
+function render() {
+  const tbody = document.getElementById('certTbody');
+  const selSec = document.getElementById('sectionFilter');
+
+  // Populate section dropdown
+  selSec.innerHTML = '<option value="">All Sections</option>';
+  SECTIONS.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id; opt.textContent = s.name;
+    selSec.appendChild(opt);
+  });
+
+  const frag = document.createDocumentFragment();
+
+  SECTIONS.forEach(sec => {
+    // Section header row
+    const collapsed = !!_collapsedSections[sec.id];
+    const hdrTr = document.createElement('tr');
+    hdrTr.className = 'ck-section-row';
+    hdrTr.dataset.section = sec.id;
+    hdrTr.innerHTML = `<td colspan="8">
+      <div class="ck-section-label">
+        <span class="ck-section-num">${esc(sec.num)}</span>
+        <span class="ck-section-name">${esc(sec.name)}</span>
+        <span class="ck-section-count" id="scount-${sec.id}"></span>
+        <span class="ck-section-chevron${collapsed ? ' collapsed' : ''}" id="chev-${sec.id}">▾</span>
+      </div>
+    </td>`;
+    hdrTr.onclick = () => toggleSection(sec.id);
+    frag.appendChild(hdrTr);
+
+    // Data rows for this section
+    const sectionRows = ROWS.filter(r => r.section === sec.id);
+    sectionRows.forEach(row => {
+      const status = getStatus(row.step);
+      const tr = document.createElement('tr');
+      tr.className = `ck-row ${STATUS_ROW[status] || ''}${collapsed ? ' hidden' : ''}`;
+      tr.dataset.section = sec.id;
+      tr.dataset.step = row.step;
+      tr.dataset.area = row.area.toLowerCase();
+      tr.dataset.level = row.level;
+      tr.dataset.req = String(row.req);
+      tr.dataset.status = status;
+      tr.dataset.task = row.task.toLowerCase();
+
+      const levelClass = LEVEL_CLASS[row.level] || 'ck-level-self-verified';
+      const levelLabel = LEVEL_DISPLAY[row.level] || row.level;
+      const reqHtml = row.req
+        ? '<span class="ck-req-badge ck-req-y">Required</span>'
+        : '<span class="ck-req-badge ck-req-n">Optional</span>';
+      const dotClass = STATUS_DOT[status] || '';
+
+      tr.innerHTML = `
+        <td class="ck-cb-cell">
+          <input type="checkbox" class="ck-cb" ${status === 'pass' ? 'checked' : ''}
+            onchange="onCheckbox(this,'${esc(row.step)}')">
+        </td>
+        <td><span class="ck-step">${esc(row.step)}</span></td>
+        <td><span class="ck-area" title="${esc(row.area)}">${esc(row.area)}</span></td>
+        <td class="ck-task">
+          <span class="ck-task-text" title="${esc(row.task)}">${esc(row.task)}<span class="ck-level ${levelClass}">${levelLabel}</span></span>
+        </td>
+        <td>${reqHtml}</td>
+        <td>
+          <input type="text" class="ck-owner-input" placeholder="Owner"
+            value="${esc(getOwner(row.step))}"
+            onchange="saveOwner('${esc(row.step)}',this.value)">
+        </td>
+        <td>
+          <div class="ck-status-wrap">
+            <span class="ck-status-dot ${dotClass}" id="dot-${esc(row.step.replace('.','_'))}"></span>
+            <select class="ck-status-sel" onchange="onStatus(this,'${esc(row.step)}')">
+              ${Object.entries(STATUS_LABELS).map(([v,l]) =>
+                `<option value="${v}"${v===status?' selected':''}>${l}</option>`).join('')}
+            </select>
+          </div>
+        </td>
+        <td>
+          <input type="text" class="ck-notes-input" placeholder="Notes…"
+            value="${esc(getNotes(row.step))}"
+            onchange="saveNotes('${esc(row.step)}',this.value)">
+        </td>`;
+      frag.appendChild(tr);
+    });
+  });
+
+  tbody.innerHTML = '';
+  tbody.appendChild(frag);
+  updateProgress();
+  updateSectionCounts();
+  applyFilters();
+}
+
+const STATUS_LABELS = {
+  'not-started': 'Not Started',
+  'in-progress': 'In Progress',
+  'pass':        'Pass',
+  'fail':        'Fail',
+  'blocked':     'Blocked',
+  'na':          'N/A',
+};
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── Interactions ──────────────────────────────────────────────────────────────
+
+function onCheckbox(cb, step) {
+  const val = cb.checked ? 'pass' : 'not-started';
+  saveStatus(step, val);
+  updateRowStatus(step, val);
+}
+
+function onStatus(sel, step) {
+  const val = sel.value;
+  saveStatus(step, val);
+  updateRowStatus(step, val);
+  const row = document.querySelector(`tr[data-step="${step}"]`);
+  if (row) {
+    const cb = row.querySelector('.ck-cb');
+    if (cb) cb.checked = (val === 'pass');
+  }
+}
+
+function updateRowStatus(step, val) {
+  const row = document.querySelector(`tr[data-step="${step}"]`);
+  if (!row) return;
+  Object.values(STATUS_ROW).forEach(c => { if (c) row.classList.remove(c); });
+  if (STATUS_ROW[val]) row.classList.add(STATUS_ROW[val]);
+  row.dataset.status = val;
+  const dotId = 'dot-' + step.replace('.','_');
+  const dot = document.getElementById(dotId);
+  if (dot) {
+    Object.values(STATUS_DOT).forEach(c => { if (c) dot.classList.remove(c); });
+    if (STATUS_DOT[val]) dot.classList.add(STATUS_DOT[val]);
+  }
+  updateProgress();
+  updateSectionCounts();
+}
+
+function toggleSection(secId) {
+  _collapsedSections[secId] = !_collapsedSections[secId];
+  const collapsed = _collapsedSections[secId];
+  const rows = document.querySelectorAll(`tr.ck-row[data-section="${secId}"]`);
+  rows.forEach(r => r.classList.toggle('hidden', collapsed));
+  const chev = document.getElementById('chev-' + secId);
+  if (chev) chev.classList.toggle('collapsed', collapsed);
+}
+
+// ── Progress & counts ─────────────────────────────────────────────────────────
+
+function updateProgress() {
+  const total = ROWS.length;
+  let pass=0, prog=0, fail=0, block=0, ns=0;
+  ROWS.forEach(r => {
+    const s = getStatus(r.step);
+    if (s==='pass') pass++;
+    else if (s==='in-progress') prog++;
+    else if (s==='fail') fail++;
+    else if (s==='blocked') block++;
+    else ns++;
+  });
+  const pct = total > 0 ? Math.round(pass/total*100) : 0;
+
+  const fill = document.getElementById('progressFill');
+  if (fill) fill.style.width = pct + '%';
+
+  const label = document.getElementById('progressLabel');
+  if (label) label.textContent = `${pass} / ${total} Complete`;
+
+  const pills = document.getElementById('statPills');
+  if (pills) {
+    pills.innerHTML = `
+      <span class="ck-stat-pill ck-pill-pass">✓ ${pass} Pass</span>
+      ${prog ? `<span class="ck-stat-pill ck-pill-prog">◎ ${prog} In Progress</span>` : ''}
+      ${fail ? `<span class="ck-stat-pill ck-pill-fail">✗ ${fail} Fail</span>` : ''}
+      ${block ? `<span class="ck-stat-pill ck-pill-block">⊘ ${block} Blocked</span>` : ''}
+      <span class="ck-stat-pill ck-pill-none">— ${ns} Not Started</span>
+    `;
+  }
+}
+
+function updateSectionCounts() {
+  SECTIONS.forEach(sec => {
+    const secRows = ROWS.filter(r => r.section === sec.id);
+    const done = secRows.filter(r => getStatus(r.step) === 'pass').length;
+    const el = document.getElementById('scount-' + sec.id);
+    if (el) el.textContent = `${done} / ${secRows.length}`;
+  });
+}
+
+// ── Filters ───────────────────────────────────────────────────────────────────
+
+function applyFilters() {
+  const search  = document.getElementById('searchInput').value.toLowerCase().trim();
+  const section = document.getElementById('sectionFilter').value;
+  const status  = document.getElementById('statusFilter').value;
+  const level   = document.getElementById('levelFilter').value;
+  const req     = document.getElementById('reqFilter').value;
+
+  let visible = 0;
+  const allRows = document.querySelectorAll('tr.ck-row');
+  const sectionHasVisible = {};
+
+  allRows.forEach(tr => {
+    const sec  = tr.dataset.section;
+    const st   = tr.dataset.status;
+    const lv   = tr.dataset.level;
+    const rq   = tr.dataset.req;
+    const task = tr.dataset.task || '';
+    const step = tr.dataset.step || '';
+    const area = tr.dataset.area || '';
+
+    const matchSearch  = !search  || task.includes(search) || step.includes(search) || area.includes(search);
+    const matchSection = !section || sec === section;
+    const matchStatus  = !status  || st === status;
+    const matchLevel   = !level   || lv === level;
+    const matchReq     = !req     || rq === req;
+    const matchIssues  = !_issuesOnly || st === 'fail' || st === 'blocked';
+
+    const collapsedHidden = _collapsedSections[sec] && !search && !status && !level && !req && !_issuesOnly;
+
+    const show = matchSearch && matchSection && matchStatus && matchLevel && matchReq && matchIssues && !collapsedHidden;
+    tr.classList.toggle('hidden', !show);
+    if (show) { visible++; sectionHasVisible[sec] = true; }
+  });
+
+  document.querySelectorAll('tr.ck-section-row').forEach(tr => {
+    const sec = tr.dataset.section;
+    const anyFilter = search || section || status || level || req || _issuesOnly;
+    if (anyFilter) {
+      tr.classList.toggle('hidden', !sectionHasVisible[sec]);
+    } else {
+      tr.classList.remove('hidden');
+    }
+  });
+
+  const total = allRows.length;
+  const countEl = document.getElementById('filterCount');
+  if (countEl) countEl.textContent = visible < total ? `${visible} of ${total} tasks` : `${total} tasks`;
+
+  document.getElementById('emptyState').style.display = visible === 0 ? 'block' : 'none';
+}
+
+function toggleIssues() {
+  _issuesOnly = !_issuesOnly;
+  document.getElementById('issuesToggle').classList.toggle('active', _issuesOnly);
+  applyFilters();
+}
+
+// ── Reset ─────────────────────────────────────────────────────────────────────
+
+function resetAll() {
+  if (!confirm('Reset all statuses, owners, and notes? This cannot be undone.')) return;
+  ROWS.forEach(r => {
+    localStorage.removeItem(sk(r.step,'status'));
+    localStorage.removeItem(sk(r.step,'owner'));
+    localStorage.removeItem(sk(r.step,'notes'));
+  });
+  render();
+}
+
+// ── Export Excel ──────────────────────────────────────────────────────────────
+
+function exportExcel() {
+  if (typeof XLSX === 'undefined') {
+    alert('SheetJS not loaded yet — please try again in a moment.');
+    return;
+  }
+
+  const sectionMap = {};
+  SECTIONS.forEach(s => { sectionMap[s.id] = s.name; });
+
+  const headers = ['Step', 'Section', 'Task', 'Required', 'Level', 'Owner', 'Status', 'Notes'];
+  const dataRows = ROWS.map(r => [
+    r.step,
+    sectionMap[r.section] || '',
+    r.task,
+    r.req ? 'Required' : 'Optional',
+    LEVEL_DISPLAY[r.level] || r.level,
+    getOwner(r.step),
+    STATUS_LABELS[getStatus(r.step)] || getStatus(r.step),
+    getNotes(r.step),
+  ]);
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+
+  ws['!cols'] = [
+    { wch: 8  }, // Step
+    { wch: 26 }, // Section
+    { wch: 60 }, // Task
+    { wch: 12 }, // Required
+    { wch: 18 }, // Level
+    { wch: 15 }, // Owner
+    { wch: 15 }, // Status
+    { wch: 40 }, // Notes
+  ];
+
+  ws['!sheetViews'] = [{ state: 'frozen', ySplit: 1, topLeftCell: 'A2' }];
+
+  ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }) };
+
+  const hdrStyle = {
+    fill: { patternType: 'solid', fgColor: { rgb: '2255AA' } },
+    font: { bold: true, color: { rgb: 'FFFFFF' } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+  };
+  headers.forEach((_, c) => {
+    const addr = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[addr]) ws[addr].s = hdrStyle;
+  });
+
+  const rowStyleWhite = {
+    fill: { patternType: 'solid', fgColor: { rgb: 'FFFFFF' } },
+    alignment: { vertical: 'center', wrapText: false },
+  };
+  const rowStyleBlue = {
+    fill: { patternType: 'solid', fgColor: { rgb: 'F0F4FA' } },
+    alignment: { vertical: 'center', wrapText: false },
+  };
+  dataRows.forEach((_, rowIdx) => {
+    const style = rowIdx % 2 === 0 ? rowStyleWhite : rowStyleBlue;
+    headers.forEach((_, c) => {
+      const addr = XLSX.utils.encode_cell({ r: rowIdx + 1, c });
+      if (ws[addr]) ws[addr].s = style;
+    });
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Allocation Cert');
+  XLSX.writeFile(wb, 'FIXReader_Allocation_Certification.xlsx');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', render);
+</script>
+<script>window.FIXREADER_ALL_TAGS = {{ tag_list_json | safe }};</script>
+<script src="/static/js/search.js"></script>
+</body>
+</html>

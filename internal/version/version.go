@@ -3,7 +3,7 @@ package version
 
 const (
 	// Version is the agent's semantic version.
-	Version = "0.2.0"
+	Version = "0.3.0"
 	// Build names the cook that produced this build.
-	Build = "a2"
+	Build = "a3"
 )

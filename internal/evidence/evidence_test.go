@@ -16,7 +16,7 @@ func TestEvidenceSchema(t *testing.T) {
 	dir := t.TempDir()
 	clk := clock.NewFake(time.Date(2026, 9, 26, 14, 3, 22, 114_000_000, time.UTC))
 	runID := MakeRunID(clk.Now())
-	if runID != "20260926-140322" {
+	if runID != "20260926-140322.114" {
 		t.Fatal(runID)
 	}
 	w := Open(dir, runID, clk)
@@ -43,7 +43,7 @@ func TestEvidenceSchema(t *testing.T) {
 	if len(recs) != 3 {
 		t.Fatalf("%d records", len(recs))
 	}
-	keys := `{"ts":"2026-09-26T14:03:22.114Z","run_id":"20260926-140322","kind":"out","session":"emu42","seq":5,"msg_type":"1","raw":"8=FIX.4.2|`
+	keys := `{"ts":"2026-09-26T14:03:22.114Z","run_id":"20260926-140322.114","kind":"out","session":"emu42","seq":5,"msg_type":"1","raw":"8=FIX.4.2|`
 	if !strings.HasPrefix(lines[0], keys) {
 		t.Fatalf("key order/values: %s", lines[0])
 	}
@@ -63,5 +63,13 @@ func TestEvidenceSchema(t *testing.T) {
 	}
 	if recs[2]["kind"] != "event" || recs[2]["detail"] != "injected seq gap: 2 -> 5" || recs[2]["injected"] != true || recs[2]["fields"] != nil {
 		t.Fatalf("event %v", recs[2])
+	}
+}
+
+func TestRunIDsDifferWithinASecond(t *testing.T) {
+	a := MakeRunID(time.Date(2026, 9, 29, 1, 2, 3, 1_000_000, time.UTC))
+	b := MakeRunID(time.Date(2026, 9, 29, 1, 2, 3, 2_000_000, time.UTC))
+	if a == b || a != "20260929-010203.001" {
+		t.Fatal(a, b)
 	}
 }

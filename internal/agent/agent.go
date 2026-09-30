@@ -51,6 +51,7 @@ type Options struct {
 	// EngineLevel overrides the config's engine log level ("" = config).
 	EngineLevel string
 	OnEvidence  func(session.Evidence)
+	OnWire      func(direction string, msg *codec.Message)
 }
 
 // Agent is one session, ready to run.
@@ -114,7 +115,7 @@ func New(opt Options) (*Agent, error) {
 	a.Orders = order.NewManager(order.Options{
 		Session: sc.ID, Profile: prof, IDs: ids, Clock: clk,
 		Order: profile.OrderOptions{IncludeHandlInst: sc.IncludeHandlInst}, Account: sc.Account,
-		SenderID: sc.SenderCompID,
+		SenderID: sc.SenderCompID, AnswerGrace: sc.AnswerGrace(),
 	})
 	a.Session, err = session.New(session.Config{
 		SessionID: sc.ID, Profile: prof, SenderCompID: sc.SenderCompID, TargetCompID: sc.TargetCompID,
@@ -132,7 +133,7 @@ func New(opt Options) (*Agent, error) {
 	a.Init = transport.New(transport.Options{
 		Addr: sc.Addr(), Session: a.Session, Clock: clk, Evidence: a.Evidence, FixLog: a.FixLog,
 		EngineLog: a.EngineLog, Reconnect: sc.Reconnect, ReconnectInterval: sc.ReconnectInterval(),
-		DialTimeout: sc.LogonTimeout(), Tick: opt.Tick, OnEvidence: opt.OnEvidence,
+		DialTimeout: sc.LogonTimeout(), Tick: opt.Tick, OnEvidence: opt.OnEvidence, OnWire: opt.OnWire,
 	})
 	return a, nil
 }
@@ -309,4 +310,10 @@ func nonEmpty(s string) string {
 		return "(no text)"
 	}
 	return s
+}
+
+// CancelAny sends a cancel even for an order the shadow state thinks is
+// over (to provoke a too-late cancel reject).
+func (a *Agent) CancelAny(ref string) (*order.Order, string, error) {
+	return a.send("F", func(m *order.Manager) (*order.Order, []codec.Field, error) { return m.CancelOpt(ref, true) })
 }

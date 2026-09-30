@@ -30,8 +30,10 @@ const (
 	KindEvent     = "event"
 )
 
-// MakeRunID formats a run id: YYYYMMDD-HHMMSS in UTC.
-func MakeRunID(t time.Time) string { return t.UTC().Format("20060102-150405") }
+// MakeRunID formats a run id: YYYYMMDD-HHMMSS.mmm in UTC (A3 3.4). The
+// milliseconds keep ClOrdIDs (which embed the run id) unique across runs
+// started in the same second; the name stays filesystem-safe.
+func MakeRunID(t time.Time) string { return t.UTC().Format("20060102-150405.000") }
 
 // Timestamp formats the ts field: ISO 8601 UTC with milliseconds and Z.
 func Timestamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }

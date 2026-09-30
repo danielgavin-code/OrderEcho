@@ -440,3 +440,29 @@ func TestForgetUndoesUnsentOrder(t *testing.T) {
 		t.Fatal("not forgotten")
 	}
 }
+
+// A3 3.3: live requests_answered waits answer_grace before warning.
+func TestLiveAnswerGrace(t *testing.T) {
+	x := newH(t, profile.FIX42, profile.OrderOptions{})
+	x.m.opt.AnswerGrace = 5 * time.Second
+	o, d, _ := x.m.NewOrder(Spec{Symbol: "ZWZZT", Qty: "500", Side: "buy", OrdType: "lmt", Price: "10.00"})
+	x.sent("D", d, false)
+	x.er(o.Root, "", "O-1", "0", "0", "500", "0", "0.00", "0", "500", "0.0000")
+	_, g, _ := x.m.Replace("last", "800", "10.50")
+	x.sent("G", g, false) // not yet answered
+	// A fill on the old ClOrdID arrives before the replace ack.
+	x.clk.Advance(time.Second)
+	x.er(o.Root, "", "O-1", "1", "1", "500", "100", "10.00", "100", "400", "10.0000")
+	if o.Verdict != checks.PASS {
+		t.Fatalf("warned within grace: %+v", o.Checks)
+	}
+	x.clk.Advance(5 * time.Second)
+	acts := x.er(o.Root, "", "O-1", "1", "1", "500", "100", "10.00", "200", "300", "10.0000")
+	if e, ok := findEv(acts, "check requests_answered"); !ok || e.Level != session.Warning || o.Verdict != checks.WARN {
+		t.Fatalf("no WARN after grace: %v %+v", o.Verdict, acts)
+	}
+	// Offline analysis is unchanged: without grace it WARNs at once.
+	if x.m.Chain(o).Verdict() != checks.WARN {
+		t.Fatal("offline verdict")
+	}
+}

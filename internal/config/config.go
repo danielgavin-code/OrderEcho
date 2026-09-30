@@ -42,6 +42,8 @@ type Defaults struct {
 	IncludeHandlInst  bool   // 21=1 on FIX 4.4 D/G (always sent on 4.2)
 	ClOrdIDPrefix     string // ClOrdIDs are <prefix>-<run_id>-<n>
 	Account           string // tag 1 on D when set
+	// A3 addition.
+	AnswerGraceSec float64 // live requests_answered grace
 }
 
 // Session is one configured FIX session.
@@ -63,6 +65,9 @@ func (s Session) LogonTimeout() time.Duration { return secs(s.LogonTimeoutSec) }
 // LogoutTimeout as a duration.
 func (s Session) LogoutTimeout() time.Duration { return secs(s.LogoutTimeoutSec) }
 
+// AnswerGrace as a duration.
+func (s Session) AnswerGrace() time.Duration { return secs(s.AnswerGraceSec) }
+
 // ReconnectInterval as a duration.
 func (s Session) ReconnectInterval() time.Duration { return secs(s.ReconnectIntervalSec) }
 
@@ -76,6 +81,7 @@ type Storage struct {
 	SeqnumDir   string
 	MsgstoreDir string
 	EvidenceDir string
+	CertsDir    string // cert run results (A3)
 }
 
 // Logging configures the human-readable logs.
@@ -118,14 +124,15 @@ var builtinDefaults = Defaults{
 	HeartbeatMismatch:    "warn",
 	IncludeHandlInst:     true,
 	ClOrdIDPrefix:        "OE",
+	AnswerGraceSec:       5,
 }
 
 var (
 	topKeys     = []string{"sessions", "defaults", "storage", "logging"}
 	defaultKeys = []string{"logon_timeout_sec", "logout_timeout_sec", "heartbeat_grace_pct", "reconnect", "reconnect_interval_sec",
-		"heartbeat_mismatch", "include_handl_inst", "clordid_prefix", "account"}
+		"heartbeat_mismatch", "include_handl_inst", "clordid_prefix", "account", "answer_grace_sec"}
 	sessionKeys  = []string{"id", "fix_version", "sender_comp_id", "target_comp_id", "host", "port", "heartbeat_sec", "reset_on_logon"}
-	storageKeys  = []string{"seqnum_dir", "msgstore_dir", "evidence_dir"}
+	storageKeys  = []string{"seqnum_dir", "msgstore_dir", "evidence_dir", "certs_dir"}
 	loggingKeys  = []string{"log_dir", "fix_delimiter", "engine_level", "console"}
 	validLevels  = []string{"DEBUG", "INFO", "WARNING", "ERROR"}
 	requiredSess = []string{"id", "fix_version", "sender_comp_id", "target_comp_id", "host", "port", "heartbeat_sec"}
@@ -176,14 +183,14 @@ func Parse(data []byte) (*Config, error) {
 	}
 
 	// storage
-	cfg.Storage = Storage{SeqnumDir: "data/seqnums", MsgstoreDir: "data/msgstore", EvidenceDir: "data/evidence"}
+	cfg.Storage = Storage{SeqnumDir: "data/seqnums", MsgstoreDir: "data/msgstore", EvidenceDir: "data/evidence", CertsDir: "data/certs"}
 	if st, present, err := section(raw, "storage"); err != nil {
 		return nil, err
 	} else if present {
 		if err := unknownKeys(st, storageKeys, "storage"); err != nil {
 			return nil, err
 		}
-		for key, dst := range map[string]*string{"seqnum_dir": &cfg.Storage.SeqnumDir, "msgstore_dir": &cfg.Storage.MsgstoreDir, "evidence_dir": &cfg.Storage.EvidenceDir} {
+		for key, dst := range map[string]*string{"seqnum_dir": &cfg.Storage.SeqnumDir, "msgstore_dir": &cfg.Storage.MsgstoreDir, "evidence_dir": &cfg.Storage.EvidenceDir, "certs_dir": &cfg.Storage.CertsDir} {
 			if v, ok := st[key]; ok {
 				s, err := asString(v, "storage."+key)
 				if err != nil {
@@ -326,7 +333,7 @@ func parseSession(m map[string]any, index int, defaults Defaults) (Session, erro
 }
 
 func applyDefaults(d *Defaults, m map[string]any, where string) error {
-	for _, key := range []string{"logon_timeout_sec", "logout_timeout_sec", "heartbeat_grace_pct", "reconnect_interval_sec"} {
+	for _, key := range []string{"logon_timeout_sec", "logout_timeout_sec", "heartbeat_grace_pct", "reconnect_interval_sec", "answer_grace_sec"} {
 		v, ok := m[key]
 		if !ok {
 			continue
@@ -335,7 +342,7 @@ func applyDefaults(d *Defaults, m map[string]any, where string) error {
 		if err != nil {
 			return err
 		}
-		if n < 0 || (key != "heartbeat_grace_pct" && n == 0) {
+		if n < 0 || (key != "heartbeat_grace_pct" && key != "answer_grace_sec" && n == 0) {
 			return errf("%s: '%s' must be > 0, got %v", where, key, v)
 		}
 		switch key {
@@ -347,6 +354,8 @@ func applyDefaults(d *Defaults, m map[string]any, where string) error {
 			d.HeartbeatGracePct = n
 		case "reconnect_interval_sec":
 			d.ReconnectIntervalSec = n
+		case "answer_grace_sec":
+			d.AnswerGraceSec = n
 		}
 	}
 	if v, ok := m["reconnect"]; ok {

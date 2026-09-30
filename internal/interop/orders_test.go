@@ -339,11 +339,17 @@ func TestA2Scenario09DuplicateClOrdID(t *testing.T) {
 	if v := a.ag.View(o); v.State != order.New {
 		t.Fatalf("original order disturbed: %s", v.State)
 	}
-	// Two OrderIDs now share the ClOrdID, so order_id_constant fails in Go and
-	// in Python alike: the checks' honest verdict on a duplicate ClOrdID.
-	verdict(t, "9 duplicate ClOrdID via SendRaw", a, o, "")
+	// A3 3.2: the duplicate and its reject form their own chain, so the
+	// original order is unaffected in Go. Python still keeps them together
+	// (order_id_constant FAIL): a documented divergence.
+	verdict(t, "9 duplicate ClOrdID via SendRaw", a, o, checks.PASS)
 	finishAgent(t, a)
-	assertParity(t, casesFor("A2-9", a, e, emu, roots(a)))
+	cases := casesFor("A2-9", a, e, emu, roots(a))
+	for i := range cases {
+		cases[i].Divergence = &divergence{Check: "order_id_constant", Go: checks.PASS, Py: checks.FAIL,
+			Why: "A3 3.2 duplicate-reject chain split; Python not yet updated"}
+	}
+	assertParity(t, cases)
 }
 
 // A2 10: a TestRequest behind a gap is answered after the gap fill.

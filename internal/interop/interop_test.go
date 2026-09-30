@@ -131,8 +131,9 @@ func TestScenario3EmulatorSeqGap(t *testing.T) {
 	})
 	data, _ := os.ReadFile(a.fixLogPath())
 	log := string(data)
-	if !regexpIn(log, `OUT\s+seq=\d+\s+35=2\s+.*\|7=`+strconv.Itoa(before)+`\|16=0\|`) {
-		t.Fatalf("no ResendRequest 7=%d 16=0 in agent log:\n%s", before, log)
+	// A3 3.1: closed range, up to the seq before the one that revealed the gap.
+	if !regexpIn(log, `OUT\s+seq=\d+\s+35=2\s+.*\|7=`+strconv.Itoa(before)+`\|16=`+strconv.Itoa(before+2)+`\|`) {
+		t.Fatalf("no ResendRequest 7=%d 16=%d in agent log:\n%s", before, before+2, log)
 	}
 	if !regexpIn(log, `IN\s+seq=`+strconv.Itoa(before)+`\s+35=4\s+.*\|43=Y\|.*\|123=Y\|36=`) {
 		t.Fatalf("no gap fill received at seq %d:\n%s", before, log)

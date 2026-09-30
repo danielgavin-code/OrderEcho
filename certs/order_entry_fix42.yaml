@@ -1,0 +1,995 @@
+# Order Entry Certification — FIX 4.2 US Equities
+#
+# Made from certs/source/cert_order_entry.html (FIXReader's checklist): one
+# case per ROWS entry, `step` kept as the case id and the task text verbatim
+# (the drift test holds them to the HTML). Pass/fail comes from these
+# expectations plus the eleven order checks — never from an LLM.
+#
+# Modes: auto = the agent drives and verifies it alone; assisted = the
+# counterparty must act (a control step: executed through the target's control
+# API when it has one, otherwise BLOCKED until attested); manual = a human
+# confirms it (PENDING until attested).
+#
+# Vars are defaults for any venue; a target (certs/targets/*.yaml) and --var
+# override them. Built-ins: fix_version, sender_comp_id, target_comp_id,
+# session, heartbeat_sec, hb_window, uid (a fresh ClOrdID), transact_time,
+# case_first_in_seq, last_testreq_id, order.<ref>.{root,cl_ord_id,order_id,seq,state}.
+
+suite: order-entry-fix42
+title: Order Entry Certification — FIX 4.2 US Equities
+source: certs/source/cert_order_entry.html
+fix_version: FIX.4.2
+
+vars:
+  symbol: AAPL             # marketable: expected to fill
+  qty: "100"
+  qty_up: "200"
+  qty_down: "50"
+  limit_symbol: AAPL       # limit orders far from the market: expected to rest
+  hold_symbol: AAPL        # rests until the counterparty fills it (assisted cases)
+  limit_buy: "1.00"
+  limit_buy_new: "1.01"
+  limit_sell: "99999.00"
+  invalid_symbol: ZZZZZZZZZZ
+  invalid_account: NO-SUCH-ACCOUNT
+
+sections:
+  - { id: ENV, name: "Environment & Connectivity" }
+  - { id: SES, name: "Session Configuration" }
+  - { id: MSG, name: "Message Flow" }
+  - { id: ORD, name: "Order Entry" }
+  - { id: LCY, name: "Order Lifecycle" }
+  - { id: CXL, name: "Cancel / Replace" }
+  - { id: REJ, name: "Reject Scenarios" }
+  - { id: RCV, name: "Recovery & Advanced" }
+  - { id: SGN, name: "Final Certification Sign-Off" }
+
+cases:
+  # ── Environment & Connectivity ─────────────────────────────────────────
+  - id: "1.1"
+    section: ENV
+    area: Environment
+    title: "Certification environment details and documentation"
+    task: "Obtain certification environment IP address, port, and documentation package from exchange"
+    required: true
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "Confirm the cert host, port and the venue's documentation package were received." }
+
+  - id: "1.2"
+    section: ENV
+    area: Network
+    title: "TCP connectivity to the cert host"
+    task: "Verify TCP connectivity to cert host — telnet or port-scan on configured FIX port"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - assert_sent: { msg: A }                  # we connected and sent a Logon
+      - assert_received: { msg: A }              # and the counterparty answered on that connection
+      - session: testreq
+
+  - id: "1.3"
+    section: ENV
+    area: Network
+    title: "Outbound firewall permits FIX egress"
+    task: "Confirm outbound firewall rules permit FIX port egress from trading host"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - assert_received: { msg: A }              # an established session proves egress to the FIX port
+      - session: testreq
+
+  - id: "1.4"
+    section: ENV
+    area: Network
+    title: "Inbound rules for a different response IP/port"
+    task: "Confirm inbound rules if exchange pushes responses on a different IP/port range"
+    required: false
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "Confirm whether the venue pushes responses from a different IP/port range, and that inbound rules allow it (or N/A)." }
+
+  - id: "1.5"
+    section: ENV
+    area: Credentials
+    title: "CompIDs, password and sequence reset policy collected"
+    task: "Collect SenderCompID, TargetCompID, session password, and sequence reset policy"
+    required: true
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "Confirm SenderCompID, TargetCompID, session password and the venue's sequence reset policy were provisioned and recorded." }
+
+  - id: "1.6"
+    section: ENV
+    area: Credentials
+    title: "TLS vs clear-text requirement confirmed"
+    task: "Confirm SSL/TLS versus clear-text transport requirement with exchange onboarding team"
+    required: true
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "Confirm with the venue's onboarding team whether TLS is required (this agent speaks clear-text TCP)." }
+
+  - id: "1.7"
+    section: ENV
+    area: Environment
+    title: "UAT endpoint confirmed"
+    task: "Identify UAT vs. production environment — confirm cert runs against UAT endpoint"
+    required: true
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "Confirm the configured host/port is the venue's UAT (certification) endpoint, not production." }
+
+  # ── Session Configuration ──────────────────────────────────────────────
+  - id: "2.1"
+    section: SES
+    area: Config
+    title: "BeginString configured"
+    task: "Set BeginString (Tag 8) = FIX.4.2 in session engine configuration"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - assert_sent: { msg: A, tags: { 8: "{{fix_version}}" } }
+      - assert_received: { msg: A, tags: { 8: "{{fix_version}}" } }
+
+  - id: "2.2"
+    section: SES
+    area: Config
+    title: "SenderCompID / TargetCompID as provisioned"
+    task: "Set SenderCompID (49) and TargetCompID (56) exactly as provisioned — case sensitive"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - assert_sent: { msg: A, tags: { 49: "{{sender_comp_id}}", 56: "{{target_comp_id}}" } }
+      - assert_received: { msg: A, tags: { 49: "{{target_comp_id}}", 56: "{{sender_comp_id}}" } }
+
+  - id: "2.3"
+    section: SES
+    area: Config
+    title: "HeartBtInt configured"
+    task: "Configure HeartBtInt (108) per exchange spec — typically 30 or 60 seconds"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - assert_sent: { msg: A, tags: { 108: "{{heartbeat_sec}}" } }
+      - assert_received: { msg: A, tags: { 108: "{{heartbeat_sec}}" } }
+
+  - id: "2.4"
+    section: SES
+    area: Config
+    title: "EncryptMethod = 0"
+    task: "Set EncryptMethod (98) = 0 (None) — TLS handled at transport layer"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - assert_sent: { msg: A, tags: { 98: "0" } }
+      - assert_received: { msg: A, tags: { 98: "0" } }
+
+  - id: "2.5"
+    section: SES
+    area: Config
+    title: "ResetOnLogon for the cert session"
+    task: "Set ResetOnLogon (141) = Y for certification sessions to ensure clean sequence start"
+    required: false
+    level: basic
+    mode: auto
+    steps:
+      - assert_sent: { msg: A, which: first, tags: { 141: "Y" } }
+      - assert_received: { msg: A, which: first, tags: { 141: "Y" } }
+
+  - id: "2.6"
+    section: SES
+    area: Config
+    title: "Clean sequence state before the cert"
+    task: "Confirm sequence number file storage path and ensure clean state before cert"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      # The run starts with a sequence reset: our first Logon is seq 1 with 141=Y
+      # and the counterparty's first reply is seq 1 too.
+      - assert_sent: { msg: A, which: first, tags: { 34: "1", 141: "Y" } }
+      - assert_received: { msg: A, which: first, tags: { 34: "1" } }
+
+  - id: "2.7"
+    section: SES
+    area: Config
+    title: "ResetSeqNumFlag=Y accepted on reconnect"
+    task: "Verify ResetSeqNumFlag (141) behavior — exchange must accept flag=Y on reconnect"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - session: logout
+      - session: { reconnect: { reset: true } }
+      - assert_sent: { msg: A, tags: { 34: "1", 141: "Y" } }
+      - expect: { msg: A, tags: { 34: "1", 141: "Y" }, within: 10s }
+      - session: testreq
+
+  # ── Message Flow ────────────────────────────────────────────────────────
+  - id: "3.1"
+    section: MSG
+    area: Session
+    title: "Logon acknowledged"
+    task: "Send Logon (35=A) — verify exchange returns Logon acknowledgment"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - session: logout
+      - session: { reconnect: { reset: false } }
+      - expect: { msg: A, present: [98, 108], within: 10s }
+
+  - id: "3.2"
+    section: MSG
+    area: Session
+    title: "Bidirectional heartbeats at HeartBtInt"
+    task: "Verify bidirectional Heartbeat (35=0) exchange at configured HeartBtInt interval"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - session: { wait: "{{hb_window}}" }
+      - expect: { msg: "0", absent: [112], within: 1s }                # theirs, unsolicited
+      - expect: { from: us, msg: "0", absent: [112], within: 1s }      # ours, unsolicited
+
+  - id: "3.3"
+    section: MSG
+    area: Session
+    title: "TestRequest answered with matching Heartbeat"
+    task: "Send Test Request (35=1) with TestReqID — verify matching Heartbeat response"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - session: testreq
+      - expect: { msg: "0", tags: { 112: "{{last_testreq_id}}" }, within: 1s }
+
+  - id: "3.4"
+    section: MSG
+    area: Session
+    title: "Exchange-initiated TestRequest answered"
+    task: "Verify exchange initiates Test Request and client responds with correct Heartbeat"
+    required: true
+    level: basic
+    mode: assisted
+    steps:
+      - control: { description: "the counterparty sends a TestRequest (35=1)", post: "/sessions/{session}/test-request" }
+      - expect: { msg: "1", present: [112], within: 10s }
+      - expect: { from: us, msg: "0", present: [112], within: 5s }
+
+  - id: "3.5"
+    section: MSG
+    area: Recovery
+    title: "ResendRequest replayed with PossDupFlag=Y"
+    task: "Trigger Resend Request (35=2) — verify exchange replays with PossDupFlag=Y on replayed messages"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: mkt, symbol: "{{symbol}}", qty: "{{qty}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - session: { resend_request: { begin: "{{case_first_in_seq}}", end: "0" } }
+      - expect: { msg: "8", order: o1, tags: { 43: "Y" }, present: [122], within: 10s }
+
+  - id: "3.6"
+    section: MSG
+    area: Recovery
+    title: "Sequence gap bridged with SequenceReset-GapFill"
+    task: "Test Sequence Reset (35=4) with GapFillFlag=Y — verify sequence gap is bridged cleanly"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - session: { skip_outbound_seq: 3 }
+      - session: { testreq: { require_answer: false } }        # carries the gap to the counterparty
+      - expect: { msg: "2", within: 10s }                      # it asks for the missing range
+      - expect: { from: us, msg: "4", tags: { 123: "Y" }, within: 5s }
+      - session: testreq                                       # and the session is in sync again
+
+  - id: "3.7"
+    section: MSG
+    area: Session
+    title: "Graceful Logout acknowledged"
+    task: "Send Logout (35=5) — verify graceful session termination and acknowledgment"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - session: logout
+      - expect: { msg: "5", within: 1s }
+
+  - id: "3.8"
+    section: MSG
+    area: Recovery
+    title: "Recovery after a disconnect without Logout"
+    task: "Disconnect without Logout — reconnect and verify gap fill / sequence recovery"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - session: { skip_outbound_seq: 2 }                      # so our reconnect Logon reveals a gap
+      - session: disconnect_abrupt
+      - session: { reconnect: { reset: false } }
+      - expect: { msg: A, within: 10s }
+      - expect: { msg: "2", within: 10s }
+      - expect: { from: us, msg: "4", tags: { 123: "Y" }, within: 5s }
+      - session: testreq
+
+  # ── Order Entry ────────────────────────────────────────────────────────
+  - id: "4.1"
+    section: ORD
+    area: Market
+    title: "New Order Single — Market Buy"
+    task: "New Order Single — Market Buy: OrdType=1, Side=1, no Price tag"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: mkt, symbol: "{{symbol}}", qty: "{{qty}}" }
+      - assert_sent: { order: o1, msg: D, tags: { 40: "1", 54: "1" }, absent: [44] }
+      - expect: { exec_type: NEW, ord_status: NEW, within: 10s }
+      - expect: { ord_status: [PARTIALLY_FILLED, FILLED], within: 10s, optional: true }
+      - checks: timeline
+
+  - id: "4.2"
+    section: ORD
+    area: Market
+    title: "New Order Single — Market Sell"
+    task: "New Order Single — Market Sell: OrdType=1, Side=2, no Price tag"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: sell, ord_type: mkt, symbol: "{{symbol}}", qty: "{{qty}}" }
+      - assert_sent: { order: o1, msg: D, tags: { 40: "1", 54: "2" }, absent: [44] }
+      - expect: { exec_type: NEW, ord_status: NEW, within: 10s }
+      - expect: { ord_status: [PARTIALLY_FILLED, FILLED], within: 10s, optional: true }
+      - checks: timeline
+
+  - id: "4.3"
+    section: ORD
+    area: Limit
+    title: "New Order Single — Limit Buy"
+    task: "New Order Single — Limit Buy: OrdType=2, Side=1, Price (44) required"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - assert_sent: { order: o1, msg: D, tags: { 40: "2", 54: "1", 44: "{{limit_buy}}" } }
+      - expect: { exec_type: NEW, ord_status: NEW, within: 10s }
+      - checks: timeline
+
+  - id: "4.4"
+    section: ORD
+    area: Limit
+    title: "New Order Single — Limit Sell"
+    task: "New Order Single — Limit Sell: OrdType=2, Side=2, Price (44) required"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: sell, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_sell}}" }
+      - assert_sent: { order: o1, msg: D, tags: { 40: "2", 54: "2", 44: "{{limit_sell}}" } }
+      - expect: { exec_type: NEW, ord_status: NEW, within: 10s }
+      - checks: timeline
+
+  - id: "4.5"
+    section: ORD
+    area: TIF
+    title: "IOC order"
+    task: "IOC order — TimeInForce=3: immediate fill or cancel, no resting on book"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}", tif: ioc }
+      - assert_sent: { order: o1, msg: D, tags: { 59: "3" } }
+      - expect: { ord_status: [FILLED, CANCELED, EXPIRED], within: 10s }   # never left resting
+      - checks: timeline
+
+  - id: "4.6"
+    section: ORD
+    area: TIF
+    title: "FOK order"
+    task: "FOK order — TimeInForce=4: full fill or kill, verify all-or-nothing behavior"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}", tif: fok }
+      - assert_sent: { order: o1, msg: D, tags: { 59: "4" } }
+      - expect: { ord_status: [FILLED, CANCELED, EXPIRED], within: 10s }
+      - expect: { exec_type: PARTIAL_FILL, none: true, within: 2s }         # all or nothing
+      - checks: timeline
+
+  - id: "4.7"
+    section: ORD
+    area: TIF
+    title: "Day order"
+    task: "Day order — TimeInForce=0: default behavior, expires at session close"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}", tif: day }
+      - assert_sent: { order: o1, msg: D, tags: { 59: "0" } }
+      - expect: { exec_type: NEW, ord_status: NEW, within: 10s }
+      - checks: timeline
+
+  - id: "4.8"
+    section: ORD
+    area: TIF
+    title: "GTC order persists across session restart"
+    task: "GTC order — TimeInForce=1: verify order persists across session restart"
+    required: false
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}", tif: gtc }
+      - assert_sent: { order: o1, msg: D, tags: { 59: "1" } }
+      - expect: { exec_type: NEW, ord_status: NEW, within: 10s }
+      - session: logout
+      - session: { reconnect: { reset: false } }
+      - send: { msg: F, order: o1 }                      # still live after the restart: cancel is accepted
+      - expect: { exec_type: CANCELED, ord_status: CANCELED, within: 10s }
+      - checks: timeline
+
+  - id: "4.9"
+    section: ORD
+    area: TIF
+    title: "GTX order"
+    task: "GTX order — TimeInForce=5: good-till-extended-hours if supported by venue"
+    required: false
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}", tif: gtx }
+      - assert_sent: { order: o1, msg: D, tags: { 59: "5" } }
+      - expect: { exec_type: NEW, ord_status: NEW, within: 10s }
+      - checks: timeline
+
+  # ── Order Lifecycle ────────────────────────────────────────────────────
+  - id: "5.1"
+    section: LCY
+    area: ExecType
+    title: "Pending New before the acknowledgement"
+    task: "Receive Pending New (ExecType=A, OrdStatus=A) — before exchange acknowledges"
+    required: false
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: PENDING_NEW, ord_status: PENDING_NEW, within: 10s }
+      - expect: { exec_type: NEW, ord_status: NEW, within: 10s }
+      - checks: timeline
+
+  - id: "5.2"
+    section: LCY
+    area: ExecType
+    title: "New acknowledgement"
+    task: "Receive New Acknowledgement (ExecType=0, OrdStatus=0) — order accepted on book"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, ord_status: NEW, tags: { 14: "0", 151: "{{qty}}" }, present: [37, 17], within: 10s }
+      - checks: timeline
+
+  - id: "5.3"
+    section: LCY
+    area: ExecType
+    title: "Partial fill"
+    task: "Receive Partial Fill (ExecType=1, OrdStatus=1) — verify LastQty, LastPx, LeavesQty, CumQty"
+    required: true
+    level: basic
+    mode: assisted
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{hold_symbol}}", qty: "100", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - control: { description: "the counterparty partially fills 40 of the 100 shares", post: "/orders/{{order.o1.order_id}}/fill", body: { qty: 40 } }
+      - expect: { exec_type: PARTIAL_FILL, ord_status: PARTIALLY_FILLED, tags: { 32: "40", 14: "40", 151: "60" }, present: [31], within: 10s }
+      - checks: timeline
+
+  - id: "5.4"
+    section: LCY
+    area: ExecType
+    title: "Full fill"
+    task: "Receive Full Fill (ExecType=2, OrdStatus=2) — verify LeavesQty=0, CumQty=OrderQty"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: mkt, symbol: "{{symbol}}", qty: "{{qty}}" }
+      - expect: { exec_type: FILL, ord_status: FILLED, tags: { 151: "0", 14: "{{qty}}" }, within: 15s }
+      - checks: timeline
+
+  - id: "5.5"
+    section: LCY
+    area: ExecType
+    title: "Done For Day"
+    task: "Receive Done For Day (ExecType=3, OrdStatus=3) — end-of-session partial IOC behavior"
+    required: false
+    level: intermediate
+    mode: assisted
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{hold_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}", tif: day }
+      - expect: { exec_type: NEW, within: 10s }
+      - control: { description: "the counterparty ends the trading day for the order (Done For Day)" }
+      - expect: { exec_type: DONE_FOR_DAY, ord_status: DONE_FOR_DAY, within: 30s }
+      - checks: timeline
+
+  - id: "5.6"
+    section: LCY
+    area: ExecType
+    title: "Expired"
+    task: "Receive Expired (ExecType=C, OrdStatus=C) — GTD or IOC order not executed"
+    required: false
+    level: intermediate
+    mode: assisted
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{hold_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}", tif: ioc }
+      - control: { description: "the counterparty expires the unexecuted order" }
+      - expect: { exec_type: EXPIRED, ord_status: EXPIRED, within: 30s }
+      - checks: timeline
+
+  - id: "5.7"
+    section: LCY
+    area: ExecID
+    title: "ExecIDs unique across the session"
+    task: "Verify ExecID (17) is unique across all Execution Reports for the session"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: mkt, symbol: "{{symbol}}", qty: "{{qty}}" }
+      - expect: { ord_status: FILLED, within: 15s }
+      - send: { msg: D, ref: o2, side: sell, ord_type: mkt, symbol: "{{symbol}}", qty: "{{qty}}" }
+      - expect: { ord_status: FILLED, within: 15s }
+      - checks: session_exec_ids
+      - checks: timeline
+
+  - id: "5.8"
+    section: LCY
+    area: ExecID
+    title: "AvgPx and CumQty accumulate across partial fills"
+    task: "Verify AvgPx (6) and CumQty (14) accumulate correctly across multiple partial fills"
+    required: true
+    level: intermediate
+    mode: assisted
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{hold_symbol}}", qty: "100", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - control: { description: "the counterparty fills 30 shares at 10.00", post: "/orders/{{order.o1.order_id}}/fill", body: { qty: 30, price: "10.00" } }
+      - expect: { exec_type: PARTIAL_FILL, tags: { 14: "30" }, within: 10s }
+      - control: { description: "the counterparty fills 20 more shares at 11.00", post: "/orders/{{order.o1.order_id}}/fill", body: { qty: 20, price: "11.00" } }
+      - expect: { exec_type: PARTIAL_FILL, tags: { 14: "50", 151: "50" }, within: 10s }
+      - checks: timeline                                     # AvgPx == (30*10 + 20*11)/50 within 0.0001
+
+  # ── Cancel / Replace ───────────────────────────────────────────────────
+  - id: "6.1"
+    section: CXL
+    area: Cancel
+    title: "Order Cancel Request references ClOrdID and OrigClOrdID"
+    task: "Send Order Cancel Request (35=F) — reference correct ClOrdID (11) and OrigClOrdID (41)"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - send: { msg: F, order: o1 }
+      - assert_sent: { order: o1, msg: F, tags: { 41: "{{order.o1.root}}" }, present: [11, 55, 54, 38] }
+      - expect: { exec_type: CANCELED, within: 10s }
+      - checks: timeline
+
+  - id: "6.2"
+    section: CXL
+    area: Cancel
+    title: "Cancel acknowledgement"
+    task: "Receive Cancel Acknowledgement (35=8, ExecType=4, OrdStatus=4) — order removed from book"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - send: { msg: F, order: o1 }
+      - expect: { msg: "8", exec_type: CANCELED, ord_status: CANCELED, tags: { 151: "0", 41: "{{order.o1.root}}" }, within: 10s }
+      - checks: timeline
+
+  - id: "6.3"
+    section: CXL
+    area: Cancel
+    title: "Cancel Reject for a fully-filled order"
+    task: "Receive Cancel Reject (35=9) — attempt to cancel a fully-filled order (CxlRejReason=0)"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: mkt, symbol: "{{symbol}}", qty: "{{qty}}" }
+      - expect: { ord_status: FILLED, within: 15s }
+      - send: { msg: F, order: o1, allow_terminal: true }
+      - expect: { msg: "9", tags: { 102: "0", 434: "1" }, within: 10s }
+      - checks: timeline
+
+  - id: "6.4"
+    section: CXL
+    area: Cancel
+    title: "Cancel Reject — too late to cancel (order pending fill)"
+    task: "Receive Cancel Reject — Too Late to Cancel (CxlRejReason=1) — order pending fill"
+    required: true
+    level: intermediate
+    mode: assisted
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{hold_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - control: { description: "the counterparty holds the order in a pending-fill state so that a cancel is too late" }
+      - send: { msg: F, order: o1 }
+      # The checklist says CxlRejReason=1; FIX 4.2 defines 0 = Too late to cancel,
+      # 1 = Unknown order. Both are accepted here (see REPORT_A3, questions).
+      - expect: { msg: "9", tags: { 102: ["0", "1"], 434: "1" }, within: 10s }
+      - checks: timeline
+
+  - id: "6.5"
+    section: CXL
+    area: Replace
+    title: "Cancel/Replace — price only"
+    task: "Send Order Cancel/Replace (35=G) — change Price only, preserve quantity and side"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - send: { msg: G, order: o1, qty: "{{qty}}", price: "{{limit_buy_new}}" }
+      - assert_sent: { order: o1, msg: G, tags: { 38: "{{qty}}", 54: "1", 44: "{{limit_buy_new}}", 41: "{{order.o1.root}}" } }
+      - expect: { exec_type: REPLACED, tags: { 38: "{{qty}}" }, within: 10s }
+      - checks: timeline
+
+  - id: "6.6"
+    section: CXL
+    area: Replace
+    title: "Cancel/Replace — quantity up"
+    task: "Send Order Cancel/Replace (35=G) — change quantity up (queue position behavior varies by venue)"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - send: { msg: G, order: o1, qty: "{{qty_up}}", price: "{{limit_buy}}" }
+      - assert_sent: { order: o1, msg: G, tags: { 38: "{{qty_up}}", 44: "{{limit_buy}}" } }
+      - expect: { exec_type: REPLACED, tags: { 38: "{{qty_up}}", 151: "{{qty_up}}" }, within: 10s }
+      - checks: timeline
+
+  - id: "6.7"
+    section: CXL
+    area: Replace
+    title: "Cancel/Replace — quantity down"
+    task: "Send Order Cancel/Replace (35=G) — change quantity down (typically preserves queue priority)"
+    required: false
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - send: { msg: G, order: o1, qty: "{{qty_down}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: REPLACED, tags: { 38: "{{qty_down}}", 151: "{{qty_down}}" }, within: 10s }
+      - checks: timeline
+
+  - id: "6.8"
+    section: CXL
+    area: Replace
+    title: "Pending Replace then Replace ack"
+    task: "Receive Pending Replace (OrdStatus=E) then Replace ACK — verify OrdStatus transitions"
+    required: false
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - send: { msg: G, order: o1, qty: "{{qty_up}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: PENDING_REPLACE, ord_status: PENDING_REPLACE, within: 10s }
+      - expect: { exec_type: REPLACED, within: 10s }
+      - checks: timeline
+
+  # ── Reject Scenarios ───────────────────────────────────────────────────
+  - id: "7.1"
+    section: REJ
+    area: Session Reject
+    title: "Missing required tag — Session Reject"
+    task: "Send NewOrderSingle with missing required tag (e.g., no Symbol 55) — expect Session Reject (35=3)"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { ref: r1, raw: [[35, D], [11, "{{uid}}"], [21, "1"], [54, "1"], [60, "{{transact_time}}"], [38, "{{qty}}"], [40, "1"]] }
+      - expect: { msg: "3", tags: { 373: "1", 371: "55" }, within: 10s }
+
+  - id: "7.2"
+    section: REJ
+    area: Session Reject
+    title: "Invalid MsgType — reject"
+    task: "Send message with invalid MsgType (35) — expect Session Reject with RefTagID"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { ref: r1, raw: [[35, ZZ], [58, "OrderEcho cert: invalid MsgType"]] }
+      # Session Reject 373=11 (Invalid MsgType) is what the checklist names; many
+      # engines answer an unknown MsgType with BusinessMessageReject 380=3
+      # instead. Both are accepted (see REPORT_A3, questions).
+      - expect: { any_of: [ { msg: "3", tags: { 373: "11" } }, { msg: j, tags: { 380: "3", 372: "ZZ" } } ], within: 10s }
+
+  - id: "7.3"
+    section: REJ
+    area: Business Reject
+    title: "Invalid Symbol — reject"
+    task: "Send order with invalid Symbol (55) — expect ExecType=8 or Business Reject (35=j)"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: mkt, symbol: "{{invalid_symbol}}", qty: "{{qty}}" }
+      - expect: { any_of: [ { exec_type: REJECTED, ord_status: REJECTED }, { msg: j } ], within: 10s }
+      - checks: timeline
+
+  - id: "7.4"
+    section: REJ
+    area: Business Reject
+    title: "Invalid Price — reject"
+    task: "Send order with invalid Price — negative, zero, or out-of-range value"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { ref: r1, raw: [[35, D], [11, "{{uid}}"], [21, "1"], [55, "{{limit_symbol}}"], [54, "1"], [60, "{{transact_time}}"], [38, "{{qty}}"], [40, "2"], [44, "-1.00"]] }
+      - expect: { any_of: [ { exec_type: REJECTED }, { msg: "3" }, { msg: j } ], within: 10s }
+      - checks: timeline
+
+  - id: "7.5"
+    section: REJ
+    area: Business Reject
+    title: "Invalid Side — reject with RefTagID=54"
+    task: "Send order with invalid Side (54) value — expect reject with RefTagID=54"
+    required: true
+    level: basic
+    mode: auto
+    steps:
+      - send: { ref: r1, raw: [[35, D], [11, "{{uid}}"], [21, "1"], [55, "{{limit_symbol}}"], [54, "Z"], [60, "{{transact_time}}"], [38, "{{qty}}"], [40, "1"]] }
+      - expect: { msg: "3", tags: { 371: "54" }, within: 10s }
+
+  - id: "7.6"
+    section: REJ
+    area: Business Reject
+    title: "Invalid Account — reject"
+    task: "Send order with invalid Account (1) — expect reject if account validation is enabled"
+    required: false
+    level: basic
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}", account: "{{invalid_account}}" }
+      - assert_sent: { order: o1, msg: D, tags: { 1: "{{invalid_account}}" } }
+      - expect: { any_of: [ { exec_type: REJECTED }, { msg: j }, { msg: "3", tags: { 371: "1" } } ], within: 10s }
+
+  - id: "7.7"
+    section: REJ
+    area: Business Reject
+    title: "Duplicate ClOrdID — reject"
+    task: "Send duplicate ClOrdID (11) — same ID as a live or recently-filled order"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - send: { ref: dup, raw: [[35, D], [11, "{{order.o1.root}}"], [21, "1"], [55, "{{limit_symbol}}"], [54, "1"], [60, "{{transact_time}}"], [38, "{{qty}}"], [40, "2"], [44, "{{limit_buy}}"]] }
+      - expect: { order: dup, any_of: [ { exec_type: REJECTED, tags: { 103: "6" } }, { msg: j } ], within: 10s }
+      - checks: timeline                                  # the original order is unaffected (A3 3.2)
+
+  - id: "7.8"
+    section: REJ
+    area: Business Reject
+    title: "BusinessMessageReject structure"
+    task: "Verify Business Message Reject (35=j) structure: RefSeqNum, RefMsgType, BusinessRejectRefID, Text"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - send: { ref: r1, raw: [[35, ZZ], [58, "OrderEcho cert: provoke a BusinessMessageReject"]] }
+      - expect: { msg: j, tags: { 45: "{{order.r1.seq}}", 372: "ZZ" }, present: [380, 58], within: 10s }
+      # BusinessRejectRefID (379) is only required when the rejected message
+      # has an ID; its absence here is a warning, not a failure.
+      - assert_received: { order: r1, msg: j, present: [45, 372, 380, 58], recommended: [379] }
+
+  # ── Recovery & Advanced ────────────────────────────────────────────────
+  - id: "8.1"
+    section: RCV
+    area: Recovery
+    title: "Mid-session disconnect: ResendRequest / gap fill on reconnect"
+    task: "Simulate mid-session disconnect — reconnect and verify Resend Request / gap fill sequence"
+    required: true
+    level: intermediate
+    mode: assisted
+    steps:
+      - control: { description: "the counterparty advances its outbound MsgSeqNum by 3 (messages we will not have seen)", post: "/sessions/{session}/inject/seq-gap", body: { skip: 3 } }
+      - session: disconnect_abrupt
+      - session: { reconnect: { reset: false } }
+      - expect: { from: us, msg: "2", within: 10s }                 # we ask for the gap, closed range
+      - expect: { msg: "4", tags: { 123: "Y" }, within: 10s }       # and it is filled
+      - session: testreq
+
+  - id: "8.2"
+    section: RCV
+    area: Recovery
+    title: "PossDup resend of an order is not re-executed"
+    task: "Resend order messages with PossDupFlag=Y — verify exchange deduplicates (does not re-execute)"
+    required: true
+    level: advanced
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{limit_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - session: { resend_order: o1 }                       # the same D, its original seq, 43=Y
+      - assert_sent: { order: o1, msg: D, tags: { 43: "Y" }, present: [122] }
+      - expect: { order: o1, msg: "8", none: true, within: 3s }
+      - session: testreq                                    # session still in sync
+      - checks: timeline
+
+  - id: "8.3"
+    section: RCV
+    area: Recovery
+    title: "Execution Reports replayed with PossDupFlag=Y"
+    task: "Verify exchange replays Execution Reports with PossDupFlag=Y on resend"
+    required: true
+    level: advanced
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: mkt, symbol: "{{symbol}}", qty: "{{qty}}" }
+      - expect: { ord_status: FILLED, within: 15s }
+      - session: { resend_request: { begin: "{{case_first_in_seq}}", end: "0" } }
+      - expect: { msg: "8", order: o1, tags: { 43: "Y" }, present: [122, 17], within: 10s }
+      - checks: timeline
+
+  - id: "8.4"
+    section: RCV
+    area: Recovery
+    title: "ResendRequest while Execution Reports are in flight"
+    task: "Test Resend Request arriving while an Execution Report is mid-stream — verify ordering"
+    required: false
+    level: advanced
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: mkt, symbol: "{{symbol}}", qty: "{{qty}}" }
+      - session: { resend_request: { begin: "{{case_first_in_seq}}", end: "0" } }   # before the fill arrives
+      - expect: { ord_status: FILLED, within: 15s }
+      - session: testreq                                    # sequence intact
+      - checks: timeline
+
+  - id: "8.5"
+    section: RCV
+    area: Recovery
+    title: "No duplicate ExecIDs on replay"
+    task: "Verify no duplicate ExecIDs appear when exchange replays Execution Reports"
+    required: true
+    level: advanced
+    mode: auto
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: mkt, symbol: "{{symbol}}", qty: "{{qty}}" }
+      - expect: { ord_status: FILLED, within: 15s }
+      - session: { resend_request: { begin: "{{case_first_in_seq}}", end: "0" } }
+      - expect: { msg: "8", order: o1, tags: { 43: "Y" }, within: 10s }
+      - checks: session_exec_ids
+      - checks: timeline
+
+  - id: "8.6"
+    section: RCV
+    area: Recovery
+    title: "Client restart with sequence reset"
+    task: "Test client restart with sequence number reset — verify ResetSeqNumFlag=Y on Logon accepted"
+    required: true
+    level: intermediate
+    mode: auto
+    steps:
+      - session: logout
+      - session: { reconnect: { reset: true } }
+      - assert_sent: { msg: A, tags: { 34: "1", 141: "Y" } }
+      - expect: { msg: A, tags: { 141: "Y" }, within: 10s }
+      - session: testreq
+
+  - id: "8.7"
+    section: RCV
+    area: Recovery
+    title: "Exchange restart: reconnect, gap fill, open orders live"
+    task: "Test exchange restart scenario — reconnect, gap fill, confirm open orders still live"
+    required: false
+    level: advanced
+    mode: assisted
+    steps:
+      - send: { msg: D, ref: o1, side: buy, ord_type: lmt, symbol: "{{hold_symbol}}", qty: "{{qty}}", price: "{{limit_buy}}" }
+      - expect: { exec_type: NEW, within: 10s }
+      - control: { description: "the counterparty restarts its FIX engine (the session drops and comes back)" }
+      - session: { reconnect: { reset: false } }
+      - send: { msg: F, order: o1 }
+      - expect: { exec_type: CANCELED, within: 10s }          # the order survived the restart
+      - checks: timeline
+
+  # ── Final Sign-Off ─────────────────────────────────────────────────────
+  - id: "9.1"
+    section: SGN
+    area: Sign-Off
+    title: "All required tests passed"
+    task: "Confirm all Required tests have status = Pass before submitting for certification"
+    required: true
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "Review results.json: every required case is PASS (or N/A with the venue's agreement)." }
+
+  - id: "9.2"
+    section: SGN
+    area: Sign-Off
+    title: "Venue deviations documented"
+    task: "Document any exchange-specific behavior deviations from FIX 4.2 spec"
+    required: true
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "Document the venue's deviations from FIX 4.2 seen during certification (warnings and N/A reasons are a starting point)." }
+
+  - id: "9.3"
+    section: SGN
+    area: Sign-Off
+    title: "Written certification approval"
+    task: "Obtain written certification approval from exchange onboarding / certification team"
+    required: true
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "Obtain the venue's written certification approval." }
+
+  - id: "9.4"
+    section: SGN
+    area: Sign-Off
+    title: "Approval filed internally"
+    task: "File certification approval email in internal tracking system with date and venue name"
+    required: true
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "File the approval email in the internal tracking system with date and venue name." }
+
+  - id: "9.5"
+    section: SGN
+    area: Sign-Off
+    title: "Results shared with compliance and operations"
+    task: "Share certification results with compliance and operations teams per internal policy"
+    required: false
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "Share the certification results with compliance and operations." }
+
+  - id: "9.6"
+    section: SGN
+    area: Sign-Off
+    title: "Production cutover scheduled"
+    task: "Schedule production cutover date and confirm with exchange go-live team"
+    required: false
+    level: basic
+    mode: manual
+    steps:
+      - manual: { prompt: "Schedule the production cutover date and confirm it with the venue's go-live team." }

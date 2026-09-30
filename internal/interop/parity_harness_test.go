@@ -43,6 +43,13 @@ type parityCase struct {
 	Files   []string `json:"files"`
 	ClOrdID string   `json:"clordid,omitempty"`
 	OrderID string   `json:"order_id,omitempty"`
+	// Divergence, when set, is a documented, expected difference: Go and
+	// Python must disagree exactly on this check, with these statuses.
+	Divergence *divergence `json:"-"`
+}
+
+type divergence struct {
+	Check, Go, Py, Why string
 }
 
 type checkStatus struct {
@@ -85,6 +92,7 @@ var parityLog struct {
 	lines []string
 	same  int
 	diff  int
+	divs  int
 }
 
 func goParity(c parityCase) parityResult {
@@ -127,6 +135,18 @@ func assertParity(t *testing.T, cases []parityCase) {
 	py := pythonParity(t, cases)
 	for i, c := range cases {
 		g := goParity(c)
+		if d := c.Divergence; d != nil {
+			gs, ps := statusOf(g, d.Check), statusOf(py[i], d.Check)
+			line := fmt.Sprintf("%-70s go=%s py=%s [%s: go %s, py %s] (documented, expected: %s)", c.Name, g.Verdict, py[i].Verdict, d.Check, gs, ps, d.Why)
+			parityLog.Lock()
+			parityLog.lines = append(parityLog.lines, "  DIVERGE  "+line)
+			parityLog.divs++
+			parityLog.Unlock()
+			if gs != d.Go || ps != d.Py {
+				t.Errorf("divergence %s: go %s=%s (want %s), python %s=%s (want %s)", c.Name, d.Check, gs, d.Go, d.Check, ps, d.Py)
+			}
+			continue
+		}
 		ok := g.key() == py[i].key()
 		line := fmt.Sprintf("%-70s go=%s py=%s [%s]", c.Name, g.Verdict, py[i].Verdict, g.nonPass())
 		parityLog.Lock()
@@ -175,7 +195,7 @@ func printParitySummary() {
 	if parityLog.same+parityLog.diff == 0 {
 		return
 	}
-	fmt.Printf("\nPARITY SUMMARY: %d case(s) compared, %d agree, %d disagree\n", parityLog.same+parityLog.diff, parityLog.same, parityLog.diff)
+	fmt.Printf("\nPARITY SUMMARY: %d case(s) compared, %d agree, %d disagree, %d documented divergence(s) as expected\n", parityLog.same+parityLog.diff, parityLog.same, parityLog.diff, parityLog.divs)
 	for _, l := range parityLog.lines {
 		fmt.Println(l)
 	}

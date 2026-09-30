@@ -535,3 +535,29 @@ func TestDecimalParsing(t *testing.T) {
 }
 
 var _ = sort.Strings
+
+// A3 3.2: the reject of a duplicate request forms its own chain.
+func TestDuplicateRejectSplitIntoOwnChain(t *testing.T) {
+	d := fixLine("D", 2, "OUT", "FIX.4.2", "AGENT", "ORDERECHO", orderFields("C1", "", "1000"))
+	dup := fixLine("D", 3, "OUT", "FIX.4.2", "AGENT", "ORDERECHO", orderFields("C1", "", "1000"))
+	lines := []string{
+		d,
+		report(rep{seq: 2, execType: "0", ordStatus: "0", orderID: "O-1"}),
+		dup,
+		report(rep{seq: 3, execType: "8", ordStatus: "8", orderID: "O-2", leaves: "0", extra: []kv{{103, "6"}, {58, "Duplicate ClOrdID"}}}),
+	}
+	orig := chainOf(lines, "C1", "")
+	if orig.Verdict() != PASS || len(orig.Steps) != 2 || orig.OrderIDs["O-2"] {
+		t.Fatalf("original: %s steps %d %+v", orig.Verdict(), len(orig.Steps), orig.Checks)
+	}
+	split := chainOf(lines, "", "O-2")
+	if split.Verdict() != PASS || len(split.Steps) != 2 || split.Steps[1].Message.Value(103) != "6" {
+		t.Fatalf("split: %s steps %d", split.Verdict(), len(split.Steps))
+	}
+	// No duplicate request -> no split: a second OrderID still FAILs.
+	two := chainOf([]string{d, report(rep{seq: 2, execType: "0", ordStatus: "0", orderID: "O-1"}),
+		report(rep{seq: 3, execType: "8", ordStatus: "8", orderID: "O-2", leaves: "0"})}, "C1", "")
+	if statusOf(t, two, "order_id_constant").Status != FAIL {
+		t.Fatal("split without a duplicate request")
+	}
+}

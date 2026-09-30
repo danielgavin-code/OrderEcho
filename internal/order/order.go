@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/danielgavin-code/OrderEcho/internal/checks"
 	"github.com/danielgavin-code/OrderEcho/internal/clock"
@@ -80,13 +81,14 @@ type Spec struct {
 	Side    string // buy | sell | short
 	OrdType string // mkt | lmt
 	Price   string // lmt only
-	TIF     string // "" or day | gtc | opg | ioc | fok
+	TIF     string // "" or day | gtc | opg | ioc | fok | gtx
+	Account string // overrides the configured account for this order
 }
 
 var sides = map[string]string{"buy": "1", "sell": "2", "short": "5"}
 var sideNames = map[string]string{"1": "BUY", "2": "SELL", "5": "SHORT"}
 var ordTypes = map[string]string{"mkt": profile.OrdTypeMarket, "lmt": profile.OrdTypeLimit}
-var tifs = map[string]string{"day": "0", "gtc": "1", "opg": "2", "ioc": "3", "fok": "4"}
+var tifs = map[string]string{"day": "0", "gtc": "1", "opg": "2", "ioc": "3", "fok": "4", "gtx": "5"}
 
 func positiveWhole(s string) (*big.Rat, bool) {
 	d, ok := checks.ParseDec(s)
@@ -129,7 +131,7 @@ func (s Spec) Validate() (side, ordType, tif string, err error) {
 	}
 	if s.TIF != "" {
 		if tif, ok = tifs[strings.ToLower(s.TIF)]; !ok {
-			return "", "", "", fmt.Errorf("time in force must be day, gtc, opg, ioc or fok, got %q", s.TIF)
+			return "", "", "", fmt.Errorf("time in force must be day, gtc, opg, ioc, fok or gtx, got %q", s.TIF)
 		}
 	}
 	return side, ordType, tif, nil
@@ -260,6 +262,9 @@ type Options struct {
 	Order    profile.OrderOptions
 	Account  string
 	SenderID string // our SenderCompID
+	// AnswerGrace: live requests_answered does not WARN for requests younger
+	// than this (A3 3.3). Zero means no grace.
+	AnswerGrace time.Duration
 }
 
 // Manager is the pure order manager. Not safe for concurrent use; the
@@ -333,7 +338,7 @@ func (m *Manager) NewOrder(spec Spec) (*Order, []codec.Field, error) {
 	}
 	body := m.opt.Profile.RenderNewOrder(profile.NewOrder{
 		ClOrdID: id, Symbol: spec.Symbol, Side: side, OrdType: ordType, OrderQty: spec.Qty,
-		Price: o.Price, TimeInForce: tif, Account: m.opt.Account, TransactTime: m.now(),
+		Price: o.Price, TimeInForce: tif, Account: firstNonEmpty(spec.Account, m.opt.Account), TransactTime: m.now(),
 	}, m.opt.Order)
 	req := &Request{MsgType: "D", ClOrdID: id}
 	o.Requests = append(o.Requests, req)
@@ -345,13 +350,24 @@ func (m *Manager) NewOrder(spec Spec) (*Order, []codec.Field, error) {
 	return o, body, nil
 }
 
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
 // Cancel prepares an F for the order ref resolves to.
-func (m *Manager) Cancel(ref string) (*Order, []codec.Field, error) {
+func (m *Manager) Cancel(ref string) (*Order, []codec.Field, error) { return m.CancelOpt(ref, false) }
+
+// CancelOpt is Cancel; allowTerminal skips the client-side "already over"
+// refusal, to provoke a too-late cancel reject deliberately.
+func (m *Manager) CancelOpt(ref string, allowTerminal bool) (*Order, []codec.Field, error) {
 	o, err := m.Find(ref)
 	if err != nil {
 		return nil, nil, err
 	}
-	if o.Terminal() {
+	if o.Terminal() && !allowTerminal {
 		return nil, nil, fmt.Errorf("order %s is %s", o.Current, o.State)
 	}
 	id := m.opt.IDs.Next()
@@ -702,6 +718,9 @@ func (m *Manager) Chain(o *Order) *checks.Chain {
 // records the shadow snapshot.
 func (m *Manager) afterReport(o *Order, line string) []session.Action {
 	chain := m.Chain(o)
+	if m.opt.AnswerGrace > 0 {
+		chain.Checks = checks.WithAnswerGrace(chain, chain.Checks, m.opt.Clock.Now(), m.opt.AnswerGrace)
+	}
 	prev := map[string]string{}
 	for _, c := range o.Checks {
 		prev[c.Name] = c.Status
