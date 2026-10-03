@@ -93,11 +93,18 @@ func runCert(t *testing.T, dir string, timeout time.Duration, args ...string) (c
 }
 
 // The emulator run must end with every auto case PASS or N/A, the emulator
-// control steps PASS, and only the manual cases PENDING.
+// control steps PASS, and only the manual cases PENDING. Since A4 the
+// sign-off reviews follow the manual cases: 9.2 (assisted, deviations
+// drafted) waits for its attestation, and 9.1 (auto) waits until every
+// other required case is PASS or N/A.
 func checkEmulatorRun(t *testing.T, res certResults, wantManual string) {
 	t.Helper()
 	for _, c := range res.Cases {
-		switch c.Mode {
+		mode := c.Mode
+		if c.ID == "9.1" || c.ID == "9.2" {
+			mode = "manual"
+		}
+		switch mode {
 		case "manual":
 			if wantManual == "attested" {
 				if c.Status != "PASS" && c.Status != "N/A" {
@@ -127,9 +134,21 @@ func TestCertEmulatorFIX42(t *testing.T) {
 		t.Fatalf("exit %d (results %d), want 7", run.code, res.Exit)
 	}
 	checkEmulatorRun(t, res, "PENDING")
+	// A4 §3: 9.1 names the required cases still pending; 9.2's draft is written.
+	for _, c := range res.Cases {
+		if c.ID == "9.1" && (c.Mode != "auto" || !strings.Contains(c.Reason, "other required case(s) are not PASS or N/A yet: 1.1 PENDING")) {
+			t.Errorf("9.1: %s %s %s", c.Mode, c.Status, c.Reason)
+		}
+		if c.ID == "9.2" && (c.Mode != "assisted" || !strings.Contains(c.Reason, "deviations drafted: 8 N/A reason(s)")) {
+			t.Errorf("9.2: %s %s %s", c.Mode, c.Status, c.Reason)
+		}
+	}
+	if dev := mustRead(t, filepath.Join(resDir, "deviations.md")); !strings.Contains(dev, "Emulator supports TimeInForce Day only — case(s) 4.5, 4.6, 4.8, 4.9") {
+		t.Errorf("deviations.md:\n%s", dev)
+	}
 	// The assisted cases the emulator can do ran through its control API.
 	for _, c := range res.Cases {
-		if c.Mode == "assisted" && c.Status == "PASS" {
+		if c.Mode == "assisted" && c.Status == "PASS" && c.ID != "9.2" {
 			found := false
 			for _, s := range c.Steps {
 				if s.Type == "control" && s.Status == "PASS" && strings.Contains(s.Detail, "-> 200") {
@@ -163,6 +182,11 @@ func TestCertEmulatorFIX42(t *testing.T) {
 		}
 	}
 	checkEmulatorRun(t, res, "attested")
+	for _, c := range res.Cases {
+		if (c.ID == "9.1" || c.ID == "9.2") && c.Status != "PASS" {
+			t.Errorf("attested run: %s %s %s", c.ID, c.Status, c.Reason)
+		}
+	}
 	recordVerdict("%-44s exit %d  %s", "A3-1 cert FIX 4.2 emulator (attested)", res.Exit, countsLine(res.Counts))
 }
 

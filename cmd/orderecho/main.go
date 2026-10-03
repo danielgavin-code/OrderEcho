@@ -53,6 +53,16 @@ commands:
   timeline FILE... (--clordid X | --order-id X) [--json]
                                offline checks on any log (OrderEcho FIX log,
                                evidence JSONL, or raw FIX lines)
+  serve [--mcp-http] [--port N]
+                               the agent service: owns every session, order
+                               manager and cert run; JSON API on 127.0.0.1
+                               (service.port, default 8190) under /api/v1;
+                               --mcp-http also serves MCP at /mcp (bearer token)
+  serve --status               is the service running, its sessions, active runs
+  mcp                          MCP server on stdio for Claude Desktop (starts the
+                               service in the background if none is running)
+  mcp install-claude-desktop [--write]
+                               print (or merge) the Claude Desktop config entry
 
 flags for every command that connects (connect, order, session):
   --session ID                 the configured session
@@ -72,10 +82,20 @@ exit codes (commands that connect):
 exit codes (timeline): 0 PASS, 1 WARN, 2 FAIL or nothing found, as the Python viewer.
 exit codes (cert run): 0 all required PASS/N/A, 5 required FAIL, 7 required BLOCKED/PENDING,
   8 runner ERROR, 1/3/4 session failure, 2 usage.
+exit codes (serve): 0 stopped cleanly, 1 port in use / not running (--status), 2 config or usage.
+
+env: ORDERECHO_HOME=DIR  change to DIR first (Claude Desktop cannot set a working directory)
+     ORDERECHO_MCP_TOKEN  bearer token for serve --mcp-http (wins over mcp.http_token)
 `)
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if home := os.Getenv(homeEnv); home != "" {
+		if err := os.Chdir(home); err != nil {
+			fmt.Fprintf(stderr, "orderecho: %s=%s: %v\n", homeEnv, home, err)
+			return exitConfig
+		}
+	}
 	global := flag.NewFlagSet("orderecho", flag.ContinueOnError)
 	global.SetOutput(stderr)
 	global.Usage = func() { usage(stderr) }
@@ -110,6 +130,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdTimeline(cmdArgs, stdout, stderr)
 	case "cert":
 		return cmdCert(cmdArgs, *configPath, stdout, stderr)
+	case "serve":
+		return cmdServe(cmdArgs, *configPath, stdout, stderr)
+	case "mcp":
+		return cmdMCP(cmdArgs, *configPath, stdout, stderr)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return exitOK

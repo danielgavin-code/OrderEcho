@@ -68,11 +68,17 @@ type CaseResult struct {
 	Orders      []string      `json:"orders"`
 	Checks      []CheckRecord `json:"checks,omitempty"`
 	Attestation *Attestation  `json:"attestation,omitempty"`
-	Start       string        `json:"start,omitempty"`
-	End         string        `json:"end,omitempty"`
-	Ran         bool          `json:"-"` // talked to the session (has an evidence slice)
-	startOff    Offsets
-	endOff      Offsets
+	// Attestable: a human attestation decides this case (manual, assisted
+	// without an executable control step, the deviations review). Auto
+	// cases, assisted cases whose control steps ran, and target N/A cases
+	// are decided by the run.
+	Attestable bool   `json:"attestable"`
+	Review     string `json:"review,omitempty"` // required_cases | deviations
+	Start      string `json:"start,omitempty"`
+	End        string `json:"end,omitempty"`
+	Ran        bool   `json:"-"` // talked to the session (has an evidence slice)
+	startOff   Offsets
+	endOff     Offsets
 }
 
 // RunResult is a whole run.
@@ -94,9 +100,20 @@ type RunResult struct {
 	Exit       int            `json:"exit_code"`
 	SessionErr string         `json:"session_error,omitempty"`
 	Cases      []*CaseResult  `json:"cases"`
+	// RequiredInSuite lists every required case of the suite, run or not,
+	// so the required-cases review (9.1) can name the ones this run left out.
+	RequiredInSuite []string `json:"required_in_suite,omitempty"`
+	// Deviations is the drafted deviations section (9.2), when the run
+	// includes a deviations review.
+	Deviations *Deviations `json:"deviations,omitempty"`
+	// RunError is set when the run itself was cut short (the service
+	// stopped or restarted mid-run); the run then counts as ERROR.
+	RunError string `json:"run_error,omitempty"`
 	// NeverLoggedOn is set when the session could not be established at all.
-	NeverLoggedOn bool `json:"-"`
-	SessionDead   bool `json:"-"`
+	NeverLoggedOn bool `json:"never_logged_on,omitempty"`
+	SessionDead   bool `json:"session_dead,omitempty"`
+	// LogoutTimeout: our final Logout was never answered (exit 4).
+	LogoutTimeout bool `json:"logout_timeout,omitempty"`
 }
 
 // Options configure a run.
@@ -112,10 +129,15 @@ type Options struct {
 	StopOnFail  bool
 	Select      func(*Case) bool
 	Progress    func(done, total int, r *CaseResult)
-	HTTP        *http.Client
-	RunID       string
-	Version     string
-	Build       string
+	// OnCaseStart is told which case is about to run (for live status).
+	OnCaseStart func(c *Case)
+	// Abort, when it returns a reason, stops the run: every case not yet
+	// started becomes NOT_RUN with that reason.
+	Abort   func() string
+	HTTP    *http.Client
+	RunID   string
+	Version string
+	Build   string
 	// ConnectAtStart logs on before the first case (with a reset); the CLI
 	// sets it. Unit tests may connect themselves.
 	ConnectAtStart bool
@@ -190,21 +212,54 @@ func Run(opt Options) *RunResult {
 	} else if opt.Driver.Connected() {
 		r.everOn = true
 	}
-	stop := false
-	for i, c := range selected {
+	for _, c := range opt.Suite.Cases {
+		if c.Required {
+			r.res.RequiredInSuite = append(r.res.RequiredInSuite, c.ID)
+		}
+	}
+	stop, aborted := false, ""
+	done := 0
+	var reviews []*CaseResult
+	for _, c := range selected {
 		var cr *CaseResult
-		if stop {
+		if aborted == "" && opt.Abort != nil {
+			aborted = opt.Abort()
+		}
+		switch {
+		case aborted != "":
+			cr = r.newResult(c)
+			cr.Status, cr.Reason = StatusNotRun, "not run: "+aborted
+		case stop:
 			cr = r.newResult(c)
 			cr.Status, cr.Reason = StatusNotRun, "not run: --stop-on-fail after an earlier failure"
-		} else {
+		case c.ReviewOf() != "":
+			// Reviews judge the other cases, so they are decided at the end.
+			cr = r.reviewCase(c)
+			if cr.Status == "" {
+				r.res.Cases = append(r.res.Cases, cr)
+				reviews = append(reviews, cr)
+				continue
+			}
+		default:
+			if opt.OnCaseStart != nil {
+				opt.OnCaseStart(c)
+			}
 			cr = r.runCase(c)
 		}
 		r.res.Cases = append(r.res.Cases, cr)
+		done++
 		if opt.Progress != nil {
-			opt.Progress(i+1, len(selected), cr)
+			opt.Progress(done, len(selected), cr)
 		}
 		if opt.StopOnFail && (cr.Status == StatusFail || cr.Status == StatusError) {
 			stop = true
+		}
+	}
+	Finalize(r.res)
+	for _, cr := range reviews {
+		done++
+		if opt.Progress != nil {
+			opt.Progress(done, len(selected), cr)
 		}
 	}
 	// A session that went down and cannot come back is the session failing,
@@ -215,14 +270,20 @@ func Run(opt Options) *RunResult {
 			r.res.SessionErr += "; reconnect failed: " + err.Error()
 		}
 	}
-	for _, cr := range r.res.Cases {
-		r.res.Counts[cr.Status]++
-		if cr.Required {
-			r.res.Required[cr.Status]++
-		}
-	}
+	Tally(r.res)
 	r.res.End = ts(opt.Clock.Now())
 	return r.res
+}
+
+// Tally recomputes the counts by status.
+func Tally(res *RunResult) {
+	res.Counts, res.Required = map[string]int{}, map[string]int{}
+	for _, cr := range res.Cases {
+		res.Counts[cr.Status]++
+		if cr.Required {
+			res.Required[cr.Status]++
+		}
+	}
 }
 
 func (r *runner) newResult(c *Case) *CaseResult {
@@ -251,6 +312,7 @@ func (r *runner) runCase(c *Case) *CaseResult {
 		for _, s := range c.Steps {
 			prompts = append(prompts, s.Manual.Prompt)
 		}
+		cr.Attestable = true
 		if a, ok := r.opt.Attest[c.ID]; ok {
 			r.applyAttestation(cr, a)
 			return cr
@@ -269,6 +331,7 @@ func (r *runner) runCase(c *Case) *CaseResult {
 			}
 		}
 		if len(blocked) > 0 {
+			cr.Attestable = true
 			if a, ok := r.opt.Attest[c.ID]; ok {
 				r.applyAttestation(cr, a)
 				return cr
@@ -288,7 +351,42 @@ func (r *runner) runCase(c *Case) *CaseResult {
 	return r.execute(c, cr)
 }
 
+// reviewCase starts a review case: N/A by target is final at once; any
+// other review is decided by Finalize once every other case has run.
+func (r *runner) reviewCase(c *Case) *CaseResult {
+	cr := r.newResult(c)
+	cr.Review = c.ReviewOf()
+	if why, ok := r.opt.Target.NotApplicable[c.ID]; ok {
+		cr.Review = ""
+		cr.Status, cr.Reason = StatusNA, "target "+r.opt.Target.Name+": "+why
+		if a, ok := r.opt.Attest[c.ID]; ok {
+			cr.Warnings = append(cr.Warnings, "attestation ignored: the target marks this case N/A")
+			cr.Attestation = &a
+		}
+		return cr
+	}
+	cr.Start = ts(r.opt.Clock.Now())
+	a, attested := r.opt.Attest[c.ID]
+	switch cr.Review {
+	case ReviewDeviations:
+		cr.Attestable = true
+		if attested {
+			cr.Attestation = &a
+		}
+	case ReviewRequiredCases:
+		if attested {
+			cr.Warnings = append(cr.Warnings, "attestation ignored: this case is decided by code from the other cases' results")
+			cr.Attestation = &a
+		}
+	}
+	return cr
+}
+
 func (r *runner) applyAttestation(cr *CaseResult, a Attestation) {
+	applyAttestation(cr, a, ts(r.opt.Clock.Now()))
+}
+
+func applyAttestation(cr *CaseResult, a Attestation, now string) {
 	cr.Attestation = &a
 	switch a.Status {
 	case "pass":
@@ -302,7 +400,7 @@ func (r *runner) applyAttestation(cr *CaseResult, a Attestation) {
 	if a.Note != "" {
 		cr.Reason += ": " + a.Note
 	}
-	cr.Steps = append(cr.Steps, StepResult{Type: "attestation", Status: cr.Status, Detail: cr.Reason, TS: ts(r.opt.Clock.Now())})
+	cr.Steps = append(cr.Steps, StepResult{Type: "attestation", Status: cr.Status, Detail: cr.Reason, TS: now})
 }
 
 // ref is a named order or raw message within a case.
@@ -1389,12 +1487,15 @@ const (
 // any required BLOCKED/PENDING (7); a logout timeout at the very end (4);
 // otherwise 0.
 func ExitCode(r *RunResult, sessionCode int) int {
+	if r.LogoutTimeout && sessionCode == ExitOK {
+		sessionCode = ExitLogoutTO
+	}
 	switch {
 	case r.NeverLoggedOn:
 		return ExitLogonFailed
 	case r.SessionDead:
 		return ExitDropped
-	case r.Counts[StatusError] > 0:
+	case r.RunError != "" || r.Counts[StatusError] > 0:
 		return ExitRunnerError
 	case r.Required[StatusFail] > 0:
 		return ExitFail

@@ -255,11 +255,14 @@ func (l *Live) waitDown(timeout time.Duration) (*transport.Result, error) {
 }
 
 // Logout implements Driver: a clean Logout both ways, or an error.
-func (l *Live) Logout() error {
+func (l *Live) Logout() error { return l.LogoutWith("OrderEcho cert runner: logout step") }
+
+// LogoutWith is Logout with our Logout's text (58).
+func (l *Live) LogoutWith(text string) error {
 	l.mu.Lock()
 	l.intent = true
 	l.mu.Unlock()
-	if err := l.A.Init.Logout("OrderEcho cert runner: logout step"); err != nil {
+	if err := l.A.Init.Logout(text); err != nil {
 		return err
 	}
 	r, err := l.waitDown(l.A.Opt.Session.LogoutTimeout() + 5*time.Second)

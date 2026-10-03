@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"net"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +94,32 @@ type Logging struct {
 	Console      bool
 }
 
+// Service configures the long-running agent service (A4).
+type Service struct {
+	Host string // loopback only
+	Port int
+}
+
+// Addr is host:port.
+func (s Service) Addr() string { return net.JoinHostPort(s.Host, strconv.Itoa(s.Port)) }
+
+// URL is the service's base URL.
+func (s Service) URL() string { return "http://" + s.Addr() }
+
+// MCP configures the MCP front door (A4).
+type MCP struct {
+	AllowOrders        bool   // send/cancel/replace (and cert runs) are registered
+	AllowEmulatorTools bool   // emulator_* tools are registered (when a control API is configured)
+	HTTPToken          string // bearer token for MCP over HTTP (env ORDERECHO_MCP_TOKEN wins)
+}
+
+// Emulator is the counterparty emulator's control API, when the sessions
+// in Sessions talk to it (A4 emulator tools).
+type Emulator struct {
+	ControlAPI string
+	Sessions   map[string]string // agent session id -> emulator session id
+}
+
 // Config is the whole file.
 type Config struct {
 	Path     string
@@ -99,7 +127,33 @@ type Config struct {
 	Defaults Defaults
 	Storage  Storage
 	Logging  Logging
+	Service  Service
+	MCP      MCP
+	Emulator Emulator
 }
+
+// EmulatorSession returns the emulator's id for an agent session when that
+// session's counterparty is the emulator with a control API.
+func (c *Config) EmulatorSession(id string) (string, bool) {
+	if c.Emulator.ControlAPI == "" {
+		return "", false
+	}
+	v, ok := c.Emulator.Sessions[id]
+	return v, ok
+}
+
+// IsLoopbackHost reports whether host names this machine: localhost or a
+// loopback IP. Any other name counts as external.
+func IsLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
+// External reports whether the session's counterparty is off this machine.
+func (s Session) External() bool { return !IsLoopbackHost(s.Host) }
 
 // Session returns the session with id.
 func (c *Config) Session(id string) (Session, error) {
@@ -128,7 +182,7 @@ var builtinDefaults = Defaults{
 }
 
 var (
-	topKeys     = []string{"sessions", "defaults", "storage", "logging"}
+	topKeys     = []string{"sessions", "defaults", "storage", "logging", "service", "mcp", "emulator"}
 	defaultKeys = []string{"logon_timeout_sec", "logout_timeout_sec", "heartbeat_grace_pct", "reconnect", "reconnect_interval_sec",
 		"heartbeat_mismatch", "include_handl_inst", "clordid_prefix", "account", "answer_grace_sec"}
 	sessionKeys  = []string{"id", "fix_version", "sender_comp_id", "target_comp_id", "host", "port", "heartbeat_sec", "reset_on_logon"}
@@ -242,6 +296,10 @@ func Parse(data []byte) (*Config, error) {
 		}
 	}
 
+	if err := parseA4(raw, cfg); err != nil {
+		return nil, err
+	}
+
 	// sessions
 	rawSessions, ok := raw["sessions"]
 	if !ok || rawSessions == nil {
@@ -267,7 +325,105 @@ func Parse(data []byte) (*Config, error) {
 		seen[s.ID] = true
 		cfg.Sessions = append(cfg.Sessions, s)
 	}
+	for id := range cfg.Emulator.Sessions {
+		if !seen[id] {
+			return nil, errf("'emulator.sessions': %q is not a configured session", id)
+		}
+	}
 	return cfg, nil
+}
+
+// DefaultServicePort is the agent service's default port.
+const DefaultServicePort = 8190
+
+func parseA4(raw map[string]any, cfg *Config) error {
+	cfg.Service = Service{Host: "127.0.0.1", Port: DefaultServicePort}
+	if sv, present, err := section(raw, "service"); err != nil {
+		return err
+	} else if present {
+		if err := unknownKeys(sv, []string{"host", "port"}, "service"); err != nil {
+			return err
+		}
+		if v, ok := sv["host"]; ok {
+			h, err := asString(v, "'service.host'")
+			if err != nil {
+				return err
+			}
+			if !IsLoopbackHost(h) {
+				return errf("'service.host' must be a loopback address (127.0.0.1, ::1 or localhost); the service never listens beyond this machine, got %q", h)
+			}
+			cfg.Service.Host = h
+		}
+		if v, ok := sv["port"]; ok {
+			p, err := asInt(v, "'service.port'")
+			if err != nil {
+				return err
+			}
+			if p < 1 || p > 65535 {
+				return errf("'service.port' must be 1..65535, got %d", p)
+			}
+			cfg.Service.Port = p
+		}
+	}
+	cfg.MCP = MCP{AllowOrders: true, AllowEmulatorTools: true}
+	if m, present, err := section(raw, "mcp"); err != nil {
+		return err
+	} else if present {
+		if err := unknownKeys(m, []string{"allow_orders", "allow_emulator_tools", "http_token"}, "mcp"); err != nil {
+			return err
+		}
+		if v, ok := m["allow_orders"]; ok {
+			if cfg.MCP.AllowOrders, err = asBool(v, "'mcp.allow_orders'"); err != nil {
+				return err
+			}
+		}
+		if v, ok := m["allow_emulator_tools"]; ok {
+			if cfg.MCP.AllowEmulatorTools, err = asBool(v, "'mcp.allow_emulator_tools'"); err != nil {
+				return err
+			}
+		}
+		if v, ok := m["http_token"]; ok && v != nil {
+			s, ok := v.(string)
+			if !ok {
+				return errf("'mcp.http_token' must be a string")
+			}
+			cfg.MCP.HTTPToken = s
+		}
+	}
+	if e, present, err := section(raw, "emulator"); err != nil {
+		return err
+	} else if present {
+		if err := unknownKeys(e, []string{"control_api", "sessions"}, "emulator"); err != nil {
+			return err
+		}
+		if v, ok := e["control_api"]; ok {
+			if cfg.Emulator.ControlAPI, err = asString(v, "'emulator.control_api'"); err != nil {
+				return err
+			}
+			if !strings.HasPrefix(cfg.Emulator.ControlAPI, "http://") && !strings.HasPrefix(cfg.Emulator.ControlAPI, "https://") {
+				return errf("'emulator.control_api' must be an http(s) URL, got %q", cfg.Emulator.ControlAPI)
+			}
+			cfg.Emulator.ControlAPI = strings.TrimRight(cfg.Emulator.ControlAPI, "/")
+		}
+		cfg.Emulator.Sessions = map[string]string{}
+		if v, ok := e["sessions"]; ok {
+			m, ok := v.(map[string]any)
+			if !ok {
+				return errf("'emulator.sessions' must map agent session ids to emulator session ids")
+			}
+			for k, val := range m {
+				s, err := asString(val, fmt.Sprintf("'emulator.sessions.%s'", k))
+				if err != nil {
+					return err
+				}
+				cfg.Emulator.Sessions[k] = s
+			}
+		}
+		if cfg.Emulator.ControlAPI != "" && len(cfg.Emulator.Sessions) == 0 {
+			return errf("'emulator.sessions' is required with 'emulator.control_api' (which agent sessions talk to the emulator, and its id for each)")
+		}
+	}
+	return nil
 }
 
 func parseSession(m map[string]any, index int, defaults Defaults) (Session, error) {

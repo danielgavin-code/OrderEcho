@@ -58,6 +58,9 @@ func WriteSummary(w io.Writer, r *RunResult) {
 	if r.SessionErr != "" {
 		fmt.Fprintf(w, "session       : %s\n", r.SessionErr)
 	}
+	if r.RunError != "" {
+		fmt.Fprintf(w, "run           : ERROR: %s\n", r.RunError)
+	}
 	fmt.Fprintf(w, "exit code     : %d\n", r.Exit)
 }
 
@@ -80,6 +83,11 @@ func WriteResults(dir string, r *RunResult) error {
 	}
 	WriteSummary(f, r)
 	f.Close()
+	if r.Deviations != nil {
+		if err := os.WriteFile(filepath.Join(dir, "deviations.md"), []byte(DeviationsMarkdown(r)), 0o644); err != nil {
+			return err
+		}
+	}
 	for _, c := range r.Cases {
 		if !c.Ran {
 			continue
@@ -132,4 +140,19 @@ func Discover(root string) (suites, targets []string) {
 	sort.Strings(suites)
 	sort.Strings(targets)
 	return suites, targets
+}
+
+// ProgressLine is the one live line per finished case.
+func ProgressLine(done, total int, r *CaseResult) string {
+	line := fmt.Sprintf("[%2d/%d] %-5s %-8s %-8s %s", done, total, r.ID, r.Mode, r.Status, r.Title)
+	if r.Status != StatusPass && r.Reason != "" {
+		reason := r.Reason
+		if len(reason) > 160 {
+			reason = reason[:159] + "…"
+		}
+		line += " — " + reason
+	} else if len(r.Warnings) > 0 {
+		line += " (warning)"
+	}
+	return line
 }

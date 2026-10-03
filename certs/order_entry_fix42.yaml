@@ -935,9 +935,11 @@ cases:
     task: "Confirm all Required tests have status = Pass before submitting for certification"
     required: true
     level: basic
-    mode: manual
+    mode: auto
     steps:
-      - manual: { prompt: "Review results.json: every required case is PASS (or N/A with the venue's agreement)." }
+      # A4: decided by code over the whole run: PASS iff every other required
+      # case is PASS or N/A; otherwise the reason lists the ones that aren't.
+      - review: required_cases
 
   - id: "9.2"
     section: SGN
@@ -946,9 +948,12 @@ cases:
     task: "Document any exchange-specific behavior deviations from FIX 4.2 spec"
     required: true
     level: basic
-    mode: manual
+    mode: assisted
     steps:
-      - manual: { prompt: "Document the venue's deviations from FIX 4.2 seen during certification (warnings and N/A reasons are a starting point)." }
+      # A4: the runner drafts the deviations (every warning and N/A reason,
+      # grouped) into results.json and deviations.md; a human reviews the
+      # draft and attests the case.
+      - review: deviations
 
   - id: "9.3"
     section: SGN

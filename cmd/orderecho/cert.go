@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -17,7 +16,6 @@ import (
 	"github.com/danielgavin-code/OrderEcho/internal/cert"
 	"github.com/danielgavin-code/OrderEcho/internal/clock"
 	"github.com/danielgavin-code/OrderEcho/internal/evidence"
-	"github.com/danielgavin-code/OrderEcho/internal/fix/codec"
 	"github.com/danielgavin-code/OrderEcho/internal/version"
 )
 
@@ -193,31 +191,26 @@ func cmdCertRun(args []string, configPath string, stdout, stderr io.Writer) int 
 			suite.Name, suite.FixVersion, sc.ID, sc.FixVersion)
 		return exitConfig
 	}
-	sc.Reconnect = false // the runner decides when to reconnect
-
 	clk := clock.SystemClock{}
 	runID := evidence.MakeRunID(clk.Now())
-	hist := cert.NewHistory(clk)
 	var console io.Writer
 	if *verbose {
 		console = stdout
 	}
-	a, err := agent.New(agent.Options{Config: cfg, Session: sc, Clock: clk, Console: console, RunID: runID,
-		OnWire: func(dir string, m *codec.Message) { hist.Add(dir, m) }})
-	if err != nil {
-		fmt.Fprintf(stderr, "orderecho: %v\n", err)
-		return exitFailed
-	}
-	defer a.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigs)
+	agentCh := make(chan *agent.Agent, 1)
 	go func() {
 		<-sigs
 		fmt.Fprintln(stdout, "\n>>> interrupted: stopping the run")
-		a.Init.Stop("interrupted")
+		select {
+		case a := <-agentCh:
+			a.Init.Stop("interrupted")
+		default:
+		}
 		cancel()
 	}()
 
@@ -230,34 +223,17 @@ func cmdCertRun(args []string, configPath string, stdout, stderr io.Writer) int 
 	}
 	fmt.Fprintln(stdout)
 
-	drv := cert.NewLive(ctx, a, hist)
-	res := cert.Run(cert.Options{
-		Suite: suite, Target: target, Attest: attest, Driver: drv, Clock: clk, CLIVars: cliVars,
-		CaseTimeout: *caseTimeout, StopOnFail: *stopOnFail, Select: selectFn, RunID: runID,
-		Version: version.Version, Build: version.Build, ConnectAtStart: true, ResetAtStart: true,
-		Progress: func(done, total int, r *cert.CaseResult) {
-			line := fmt.Sprintf("[%2d/%d] %-5s %-8s %-8s %s", done, total, r.ID, r.Mode, r.Status, r.Title)
-			if r.Status != cert.StatusPass && r.Reason != "" {
-				reason := r.Reason
-				if len(reason) > 160 {
-					reason = reason[:159] + "…"
-				}
-				line += " — " + reason
-			} else if len(r.Warnings) > 0 {
-				line += " (warning)"
-			}
-			fmt.Fprintln(stdout, line)
-		},
+	res, dir, err := cert.Execute(cert.ExecOptions{
+		Ctx: ctx, Config: cfg, Session: sc, Suite: suite, Target: target, Attest: attest, CLIVars: cliVars,
+		Select: selectFn, CaseTimeout: *caseTimeout, StopOnFail: *stopOnFail, RunID: runID, Console: console,
+		OnAgent:  func(a *agent.Agent) { agentCh <- a },
+		Progress: func(done, total int, r *cert.CaseResult) { fmt.Fprintln(stdout, cert.ProgressLine(done, total, r)) },
 	})
-	sessionCode := agent.ExitOK
-	if r, err := drv.Close(); err != nil {
-		fmt.Fprintf(stderr, "orderecho: closing the session: %v\n", err)
-	} else if r != nil && !res.NeverLoggedOn && r.Outcome.DisconnectCause == "Logout timeout" {
-		sessionCode = agent.ExitLogoutTimeout
+	if res == nil {
+		fmt.Fprintf(stderr, "orderecho: %v\n", err)
+		return exitFailed
 	}
-	res.Exit = cert.ExitCode(res, sessionCode)
-	dir := filepath.Join(cfg.Storage.CertsDir, runID)
-	if err := cert.WriteResults(dir, res); err != nil {
+	if err != nil {
 		fmt.Fprintf(stderr, "orderecho: writing results: %v\n", err)
 		return cert.ExitRunnerError
 	}

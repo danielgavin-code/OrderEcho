@@ -15,3 +15,15 @@ defaults: { logon_timeout_sec: 10, logout_timeout_sec: 10, heartbeat_grace_pct: 
 storage: { seqnum_dir: data/seqnums, msgstore_dir: data/msgstore, evidence_dir: data/evidence, certs_dir: data/certs }
 
 logging: { log_dir: logs, fix_delimiter: "|", engine_level: INFO, console: true }
+
+# A4: the agent service (orderecho serve) — loopback only.
+service: { host: 127.0.0.1, port: 8190 }
+
+# A4: the MCP front door (orderecho mcp / serve --mcp-http).
+mcp: { allow_orders: true,            # send_order, cancel_order, replace_order, start_cert_run
+       allow_emulator_tools: true,    # emulator_* tools (only with emulator.control_api below)
+       http_token: "" }               # MCP over HTTP needs a bearer token; env ORDERECHO_MCP_TOKEN wins
+
+# A4: these sessions' counterparty is the OrderEcho emulator; its control API
+# backs the emulator_* tools (agent session id -> emulator session id).
+emulator: { control_api: http://127.0.0.1:8090, sessions: { emu42: agent42, emu44: agent44, strict: strict-broker } }

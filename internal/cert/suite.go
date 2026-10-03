@@ -62,7 +62,7 @@ type Case struct {
 
 // Step is one step; exactly one of the pointers is set.
 type Step struct {
-	Type    string // send | expect | session | control | assert_sent | assert_received | checks | manual
+	Type    string // send | expect | session | control | assert_sent | assert_received | checks | manual | review
 	Send    *SendStep
 	Expect  *ExpectStep
 	Session *SessionStep
@@ -70,7 +70,20 @@ type Step struct {
 	Assert  *AssertStep
 	Checks  string // timeline | session_exec_ids
 	Manual  *ManualStep
+	Review  string // required_cases | deviations (A4: sign-off rows decided over the whole run)
 }
+
+// Review kinds. A review step looks at the other cases' results instead of
+// the session, so the runner evaluates it after every other case, and again
+// whenever an attestation changes a result.
+const (
+	// ReviewRequiredCases passes iff every other required case of the suite
+	// is PASS or N/A (9.1).
+	ReviewRequiredCases = "required_cases"
+	// ReviewDeviations drafts the deviations (warnings and N/A reasons); a
+	// human still attests it (9.2).
+	ReviewDeviations = "deviations"
+)
 
 // SendStep sends D/F/G via the normal path, or raw fields via SendRaw.
 type SendStep struct {
@@ -487,7 +500,7 @@ func parseCase(file string, index int, n *yaml.Node) (*Case, error) {
 	return c, nil
 }
 
-var stepTypes = []string{"send", "expect", "session", "control", "assert_sent", "assert_received", "checks", "manual"}
+var stepTypes = []string{"send", "expect", "session", "control", "assert_sent", "assert_received", "checks", "manual", "review"}
 
 func parseStep(file, where string, n *yaml.Node) (*Step, error) {
 	m, keys, ok := mapping(n)
@@ -522,6 +535,12 @@ func parseStep(file, where string, n *yaml.Node) (*Step, error) {
 			return nil, errAt(file, where, "manual needs a 'prompt'")
 		}
 		st.Manual = &ManualStep{Prompt: p}
+	case "review":
+		r, ok := scalar(v)
+		if !ok || (r != ReviewRequiredCases && r != ReviewDeviations) {
+			return nil, errAt(file, where, "review must be '%s' or '%s'", ReviewRequiredCases, ReviewDeviations)
+		}
+		st.Review = r
 	default:
 		return nil, errAt(file, where, "unknown step type %q (known: %s)", typ, strings.Join(stepTypes, ", "))
 	}
@@ -884,7 +903,7 @@ func (s *Suite) validate() error {
 		if len(c.Steps) == 0 {
 			return errAt(f, where, "no steps")
 		}
-		hasControl, hasManual, hasOther := false, false, false
+		hasControl, hasManual, hasOther, review := false, false, false, ""
 		refs := map[string]bool{}
 		for i, st := range c.Steps {
 			sw := fmt.Sprintf("%s step %d", where, i+1)
@@ -893,6 +912,8 @@ func (s *Suite) validate() error {
 				hasControl = true
 			case "manual":
 				hasManual = true
+			case "review":
+				review = st.Review
 			default:
 				hasOther = true
 			}
@@ -915,6 +936,17 @@ func (s *Suite) validate() error {
 				refs[st.Send.Ref] = true
 			}
 		}
+		if review != "" {
+			// A review is the whole case: it judges other cases' results.
+			if len(c.Steps) != 1 {
+				return errAt(f, where, "a review step must be the case's only step")
+			}
+			want := map[string]string{ReviewRequiredCases: ModeAuto, ReviewDeviations: ModeAssisted}[review]
+			if c.Mode != want {
+				return errAt(f, where, "review: %s belongs in a %s case, not %s", review, want, c.Mode)
+			}
+			continue
+		}
 		switch c.Mode {
 		case ModeManual:
 			if !hasManual || hasOther || hasControl {
@@ -933,6 +965,14 @@ func (s *Suite) validate() error {
 		}
 	}
 	return nil
+}
+
+// ReviewOf returns the case's review kind ("" for an ordinary case).
+func (c *Case) ReviewOf() string {
+	if len(c.Steps) == 1 && c.Steps[0].Type == "review" {
+		return c.Steps[0].Review
+	}
+	return ""
 }
 
 // Case returns the case with id.
