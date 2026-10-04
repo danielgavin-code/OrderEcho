@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgavin-code/OrderEcho/internal/config"
@@ -96,7 +97,7 @@ func (s *Service) Handler(opt HandlerOptions) http.Handler {
 			return
 		}
 		client := r.Header.Get(ClientHeader)
-		if client != ClientMCPStdio {
+		if client != ClientMCPStdio && client != ClientGUI {
 			client = ClientAPI
 		}
 		resp := s.Dispatch(r.Context(), client, name, body)
@@ -106,6 +107,26 @@ func (s *Service) Handler(opt HandlerOptions) http.Handler {
 		}
 		writeHTTP(w, http.StatusOK, map[string]any{"result": resp.Result, "summary": resp.Summary})
 	})
+	mux.HandleFunc("GET /api/v1/csrf", func(w http.ResponseWriter, r *http.Request) {
+		// Readable only by same-origin pages and local non-browser clients:
+		// no CORS headers, and the guard refuses foreign Hosts.
+		writeHTTP(w, http.StatusOK, map[string]string{"token": s.csrf, "header": CSRFHeader})
+	})
+	mux.HandleFunc("GET /api/v1/about", func(w http.ResponseWriter, r *http.Request) { writeHTTP(w, http.StatusOK, s.about()) })
+	mux.HandleFunc("GET /api/v1/events", s.serveEvents)
+	mux.HandleFunc("GET /api/v1/certs", s.serveRuns)
+	mux.HandleFunc("GET /api/v1/certs/{run_id}/report", s.serveReport)
+	mux.HandleFunc("GET /api/v1/certs/{run_id}/verify", s.serveVerify)
+	mux.HandleFunc("GET /certs/{run_id}/report", s.serveReport)
+	for path, page := range Pages {
+		if path == "/" {
+			mux.HandleFunc("GET /{$}", s.servePage(page))
+		} else {
+			mux.HandleFunc("GET "+path, s.servePage(page))
+		}
+	}
+	mux.HandleFunc("GET /assets/orderecho.css", serveAsset("orderecho.css", "text/css; charset=utf-8"))
+	mux.HandleFunc("GET /assets/app.js", serveAsset("app.js", "text/javascript; charset=utf-8"))
 	if opt.MCP != nil {
 		mux.Handle("/mcp", opt.MCP)
 		mux.Handle("/mcp/", opt.MCP)
@@ -131,15 +152,17 @@ func (s *Service) guard(next http.Handler) http.Handler {
 			writeError(w, apiErr(403, "forbidden_host", "call the service on 127.0.0.1", "Host %q is not a loopback name", r.Host))
 			return
 		}
-		if o := r.Header.Get("Origin"); o != "" {
-			oh := strings.TrimPrefix(strings.TrimPrefix(o, "http://"), "https://")
-			if h, _, err := net.SplitHostPort(oh); err == nil {
-				oh = h
-			}
-			if !config.IsLoopbackHost(oh) {
-				writeError(w, apiErr(403, "forbidden_origin", "the agent service does not accept calls from web pages", "Origin %q is not allowed", o))
-				return
-			}
+		// A5 §6: a browser Origin, when sent, must be this service's own.
+		if !sameOrigin(r) {
+			writeError(w, apiErr(403, "forbidden_origin", "the agent service only accepts calls from its own pages (http://"+r.Host+")", "Origin %q is not allowed", r.Header.Get("Origin")))
+			return
+		}
+		// Every state-changing request carries the per-process CSRF token.
+		// MCP over HTTP is separate: its bearer token protects /mcp.
+		mcpPath := r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/")
+		if stateChanging(r.Method) && !mcpPath && !s.csrfOK(r) {
+			writeError(w, apiErr(403, "csrf_invalid", "send the "+CSRFHeader+" header with the token from GET /api/v1/csrf (the GUI page carries it)", "missing or invalid CSRF token"))
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -170,6 +193,26 @@ type Client struct {
 	Name   string // sent as X-OrderEcho-Client
 	HTTP   *http.Client
 	OnDown func() error // called once when the service cannot be reached; nil = no retry
+
+	mu   sync.Mutex
+	csrf string // fetched from GET /api/v1/csrf; refreshed when the service restarts
+}
+
+func (c *Client) token(ctx context.Context, refresh bool) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.csrf != "" && !refresh {
+		return c.csrf
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := c.get(tctx, "/api/v1/csrf", &out); err == nil {
+		c.csrf = out.Token
+	}
+	return c.csrf
 }
 
 // NewClient returns a client for base.
@@ -231,11 +274,15 @@ func (c *Client) get(ctx context.Context, path string, into any) error {
 // Call runs one tool on the service: the result as raw JSON and its
 // summary, or the service's error.
 func (c *Client) Call(ctx context.Context, tool string, args json.RawMessage) (json.RawMessage, string, *APIError) {
-	res, summary, aerr, err := c.call(ctx, tool, args)
+	res, summary, aerr, err := c.call(ctx, tool, args, false)
 	if err != nil && c.OnDown != nil && ctx.Err() == nil {
 		if derr := c.OnDown(); derr == nil {
-			res, summary, aerr, err = c.call(ctx, tool, args)
+			res, summary, aerr, err = c.call(ctx, tool, args, true)
 		}
+	}
+	if err == nil && aerr != nil && aerr.Code == "csrf_invalid" {
+		// The service restarted under us (a new token): fetch it once more.
+		res, summary, aerr, err = c.call(ctx, tool, args, true)
 	}
 	if err != nil {
 		return nil, "", apiErr(503, "service_unreachable",
@@ -245,7 +292,7 @@ func (c *Client) Call(ctx context.Context, tool string, args json.RawMessage) (j
 	return res, summary, aerr
 }
 
-func (c *Client) call(ctx context.Context, tool string, args json.RawMessage) (json.RawMessage, string, *APIError, error) {
+func (c *Client) call(ctx context.Context, tool string, args json.RawMessage, refresh bool) (json.RawMessage, string, *APIError, error) {
 	if len(args) == 0 {
 		args = json.RawMessage("{}")
 	}
@@ -257,6 +304,7 @@ func (c *Client) call(ctx context.Context, tool string, args json.RawMessage) (j
 	if c.Name != "" {
 		req.Header.Set(ClientHeader, c.Name)
 	}
+	req.Header.Set(CSRFHeader, c.token(ctx, refresh))
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, "", nil, err

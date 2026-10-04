@@ -99,7 +99,16 @@ type RunResult struct {
 	Required   map[string]int `json:"required_counts"`
 	Exit       int            `json:"exit_code"`
 	SessionErr string         `json:"session_error,omitempty"`
-	Cases      []*CaseResult  `json:"cases"`
+	// A5: who the run talked to, for the report header.
+	SenderCompID string    `json:"sender_comp_id,omitempty"`
+	TargetCompID string    `json:"target_comp_id,omitempty"`
+	Address      string    `json:"address,omitempty"`
+	ControlAPI   string    `json:"control_api,omitempty"`
+	Counterparty string    `json:"counterparty,omitempty"` // e.g. the emulator's name and version
+	Sections     []Section `json:"sections,omitempty"`
+	// Integrity: SHA-256 of every per-case file, written at run end (A5).
+	Integrity *Integrity    `json:"integrity,omitempty"`
+	Cases     []*CaseResult `json:"cases"`
 	// RequiredInSuite lists every required case of the suite, run or not,
 	// so the required-cases review (9.1) can name the ones this run left out.
 	RequiredInSuite []string `json:"required_in_suite,omitempty"`
@@ -138,6 +147,8 @@ type Options struct {
 	RunID   string
 	Version string
 	Build   string
+	// Counterparty identifies the venue when known (the emulator's version).
+	Counterparty string
 	// ConnectAtStart logs on before the first case (with a reset); the CLI
 	// sets it. Unit tests may connect themselves.
 	ConnectAtStart bool
@@ -194,7 +205,10 @@ func Run(opt Options) *RunResult {
 	r.vars = MergeVars(opt.Suite.Vars, opt.Target.Vars, opt.CLIVars, builtins)
 	r.res = &RunResult{Suite: opt.Suite.Name, SuiteFile: opt.Suite.File, Title: opt.Suite.Title, Target: opt.Target.Name,
 		TargetFile: opt.Target.File, Session: r.info.SessionID, FixVersion: r.info.FixVersion, Version: opt.Version,
-		Build: opt.Build, RunID: opt.RunID, Start: ts(opt.Clock.Now()), Counts: map[string]int{}, Required: map[string]int{}}
+		Build: opt.Build, RunID: opt.RunID, Start: ts(opt.Clock.Now()), Counts: map[string]int{}, Required: map[string]int{},
+		SenderCompID: r.info.SenderCompID, TargetCompID: r.info.TargetCompID, Address: r.info.Address,
+		ControlAPI: opt.Target.ControlAPI, Counterparty: opt.Counterparty, Sections: opt.Suite.Sections,
+		Integrity: NewIntegrity()}
 
 	var selected []*Case
 	for _, c := range opt.Suite.Cases {

@@ -52,6 +52,8 @@ type Options struct {
 	EngineLevel string
 	OnEvidence  func(session.Evidence)
 	OnWire      func(direction string, msg *codec.Message)
+	// OnWireInjected: an outbound message sent via SendRaw (A5 live feed).
+	OnWireInjected func(msg *codec.Message)
 }
 
 // Agent is one session, ready to run.
@@ -133,7 +135,7 @@ func New(opt Options) (*Agent, error) {
 	a.Init = transport.New(transport.Options{
 		Addr: sc.Addr(), Session: a.Session, Clock: clk, Evidence: a.Evidence, FixLog: a.FixLog,
 		EngineLog: a.EngineLog, Reconnect: sc.Reconnect, ReconnectInterval: sc.ReconnectInterval(),
-		DialTimeout: sc.LogonTimeout(), Tick: opt.Tick, OnEvidence: opt.OnEvidence, OnWire: opt.OnWire,
+		DialTimeout: sc.LogonTimeout(), Tick: opt.Tick, OnEvidence: opt.OnEvidence, OnWire: opt.OnWire, OnWireInjected: opt.OnWireInjected,
 	})
 	return a, nil
 }

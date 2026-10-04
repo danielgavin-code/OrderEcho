@@ -15,6 +15,7 @@ import (
 	"github.com/danielgavin-code/OrderEcho/internal/clock"
 	"github.com/danielgavin-code/OrderEcho/internal/config"
 	"github.com/danielgavin-code/OrderEcho/internal/order"
+	"github.com/danielgavin-code/OrderEcho/internal/version"
 
 	"github.com/danielgavin-code/OrderEcho/internal/agent"
 )
@@ -76,8 +77,8 @@ func mustErr(t *testing.T, r Response, code string, hintHas ...string) *APIError
 func TestToolSchemasValidate(t *testing.T) {
 	want := []string{"list_sessions", "connect_session", "disconnect_session", "session_status", "send_order", "cancel_order",
 		"replace_order", "list_orders", "order_timeline", "recent_messages", "list_cert_suites", "list_cert_targets",
-		"start_cert_run", "cert_run_status", "cert_run_results", "attest_cert_case",
-		"emulator_fill_order", "emulator_cancel_order", "emulator_hold_order", "emulator_inject_next"}
+		"start_cert_run", "cert_run_status", "cert_run_results", "cert_run_report", "attest_cert_case", // A5: cert_run_report
+		"emulator_fill_order", "emulator_cancel_order", "emulator_hold_order", "emulator_inject_seq_gap", "emulator_inject_next"} // A5: seq gap (API only)
 	if len(Catalog()) != len(want) {
 		t.Fatalf("%d tools", len(Catalog()))
 	}
@@ -357,11 +358,11 @@ func TestConfigGatesTools(t *testing.T) {
 		return strings.Join(out, ",")
 	}
 	s := newTestService(t, emulatorBlock)
-	if len(s.EnabledTools()) != 20 {
+	if len(s.EnabledTools()) != 21 { // 22 catalogue entries; emulator_inject_seq_gap is API-only (A5)
 		t.Fatalf("all on: %s", names(s))
 	}
 	s = newTestService(t, "") // no control API: no emulator tools
-	if strings.Contains(names(s), "emulator_") || len(s.EnabledTools()) != 16 {
+	if strings.Contains(names(s), "emulator_") || len(s.EnabledTools()) != 17 {
 		t.Fatalf("no control api: %s", names(s))
 	}
 	s = newTestService(t, emulatorBlock+"\nmcp: { allow_orders: false, allow_emulator_tools: false }")
@@ -386,6 +387,7 @@ func TestHTTPAPIShapesAndGuard(t *testing.T) {
 		req := httptest.NewRequest(method, "http://127.0.0.1:8190"+path, strings.NewReader(body))
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set(CSRFHeader, s.CSRFToken()) // A5 §6
 		}
 		for k, v := range hdr {
 			req.Header.Set(k, v)
@@ -410,15 +412,16 @@ func TestHTTPAPIShapesAndGuard(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"error":`) || !strings.Contains(w.Body.String(), `"hint":`) {
 		t.Fatal(w.Body.String())
 	}
-	if w = do("GET", "/api/v1/health", "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"version":"0.4.0"`) {
+	if w = do("GET", "/api/v1/health", "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"version":"`+version.Version+`"`) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
-	if w = do("GET", "/api/v1/tools", "", nil); w.Code != 200 || strings.Count(w.Body.String(), `"name"`) != 20 {
+	if w = do("GET", "/api/v1/tools", "", nil); w.Code != 200 || strings.Count(w.Body.String(), `"name"`) != 22 {
 		t.Fatalf("%s", w.Body)
 	}
 	// Not JSON: refused (a browser form post cannot drive the agent).
 	req := httptest.NewRequest("POST", "http://127.0.0.1:8190/api/v1/list_sessions", strings.NewReader("{}"))
 	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set(CSRFHeader, s.CSRFToken())
 	rw := httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
 	if rw.Code != http.StatusUnsupportedMediaType {
@@ -435,7 +438,12 @@ func TestHTTPAPIShapesAndGuard(t *testing.T) {
 	if w = do("POST", "/api/v1/list_sessions", "{}", map[string]string{"Origin": "https://evil.example"}); w.Code != 403 {
 		t.Fatal(w.Code)
 	}
-	if w = do("POST", "/api/v1/list_sessions", "{}", map[string]string{"Origin": "http://localhost:3000"}); w.Code != 200 {
+	// A5 §6: only the service's own origin (any other loopback origin is
+	// another local web app, refused too).
+	if w = do("POST", "/api/v1/list_sessions", "{}", map[string]string{"Origin": "http://localhost:3000"}); w.Code != 403 {
+		t.Fatal(w.Code)
+	}
+	if w = do("POST", "/api/v1/list_sessions", "{}", map[string]string{"Origin": "http://127.0.0.1:8190"}); w.Code != 200 {
 		t.Fatal(w.Code)
 	}
 }

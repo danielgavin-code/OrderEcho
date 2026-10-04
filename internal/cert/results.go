@@ -64,29 +64,15 @@ func WriteSummary(w io.Writer, r *RunResult) {
 	fmt.Fprintf(w, "exit code     : %d\n", r.Exit)
 }
 
-// WriteResults writes results.json, summary.txt and each case's slice of the
-// FIX log and evidence into dir.
+// WriteResults writes each case's slice of the FIX log and evidence, then
+// results.json, summary.txt (and deviations.md). For a sealed run (A5:
+// Integrity set) the digest of every slice written now is recorded in
+// results.json, and results.json's own digest goes to results.sha256.
+// Digests of slices written earlier are kept as they were: a rewrite (an
+// attestation) never re-blesses a file that changed in between.
 func WriteResults(dir string, r *RunResult) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
-	}
-	data, err := json.MarshalIndent(r, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(dir, "results.json"), append(data, '\n'), 0o644); err != nil {
-		return err
-	}
-	f, err := os.Create(filepath.Join(dir, "summary.txt"))
-	if err != nil {
-		return err
-	}
-	WriteSummary(f, r)
-	f.Close()
-	if r.Deviations != nil {
-		if err := os.WriteFile(filepath.Join(dir, "deviations.md"), []byte(DeviationsMarkdown(r)), 0o644); err != nil {
-			return err
-		}
 	}
 	for _, c := range r.Cases {
 		if !c.Ran {
@@ -96,10 +82,52 @@ func WriteResults(dir string, r *RunResult) error {
 		if err := os.MkdirAll(cdir, 0o755); err != nil {
 			return err
 		}
-		if err := copySlice(c.startOff.FixPath, c.endOff.FixPath, c.startOff.FixOff, c.endOff.FixOff, filepath.Join(cdir, "fix.log")); err != nil {
+		for _, f := range []struct {
+			name           string
+			pathA, pathB   string
+			fromOff, toOff int64
+		}{
+			{"fix.log", c.startOff.FixPath, c.endOff.FixPath, c.startOff.FixOff, c.endOff.FixOff},
+			{"evidence.jsonl", c.startOff.EvPath, c.endOff.EvPath, c.startOff.EvOff, c.endOff.EvOff},
+		} {
+			dst := filepath.Join(cdir, f.name)
+			if err := copySlice(f.pathA, f.pathB, f.fromOff, f.toOff, dst); err != nil {
+				return err
+			}
+			if r.Integrity != nil {
+				sum, err := FileSHA256(dst)
+				if err != nil {
+					return err
+				}
+				if r.Integrity.Files == nil {
+					r.Integrity.Files = map[string]string{}
+				}
+				r.Integrity.Files[c.ID+"/"+f.name] = sum
+			}
+		}
+	}
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(filepath.Join(dir, "results.json"), data, 0o644); err != nil {
+		return err
+	}
+	if r.Integrity != nil {
+		line := bytesSHA256(data) + "  results.json\n"
+		if err := os.WriteFile(filepath.Join(dir, IntegritySidecar), []byte(line), 0o644); err != nil {
 			return err
 		}
-		if err := copySlice(c.startOff.EvPath, c.endOff.EvPath, c.startOff.EvOff, c.endOff.EvOff, filepath.Join(cdir, "evidence.jsonl")); err != nil {
+	}
+	f, err := os.Create(filepath.Join(dir, "summary.txt"))
+	if err != nil {
+		return err
+	}
+	WriteSummary(f, r)
+	f.Close()
+	if r.Deviations != nil {
+		if err := os.WriteFile(filepath.Join(dir, "deviations.md"), []byte(DeviationsMarkdown(r)), 0o644); err != nil {
 			return err
 		}
 	}

@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order Entry Certification — FIX 4.2 US Equities — CERTIFIED — run 20261001-120000.000</title>
+<style>
+/* OrderEcho agent -- one stylesheet for the GUI and the certification report.
+ *
+ * The :root block uses the same token names as the emulator's Cook 8
+ * stylesheet (../OrderEchoFixEmulator/web/orderecho.css), so one design pass
+ * can restyle both. Every colour, size, space and radius is a token; nothing
+ * below the :root block names a colour of its own (a test enforces it).
+ *
+ * Fixed light theme. No external fonts, no CDNs: the GUI serves this file
+ * from /assets/orderecho.css and the report inlines it.
+ */
+
+:root {
+  /* --- surfaces and ink (emulator token names) ------------------------- */
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --surface-3: #e4e8ee;
+  --text: #16181d;
+  --muted: #5a6371;
+  --border: #dde1e7;
+
+  /* --- one accent ------------------------------------------------------ */
+  --accent: #1a4fc4;
+  --accent-ink: #ffffff;
+  --accent-soft: #e9eefb;
+
+  /* --- verdicts -------------------------------------------------------- */
+  --pass: #0f6a37;
+  --warn: #7c5300;
+  --fail: #b02218;
+  --pass-soft: #e6f2ea;
+  --warn-soft: #faf0dc;
+  --fail-soft: #fbeae8;
+  /* agent additions: the other case statuses */
+  --pending: #5b3fa8;
+  --pending-soft: #efeafa;
+  --blocked: #8a4a00;
+  --blocked-soft: #fbeedd;
+  --na: #5a6371;
+  --na-soft: #eef1f5;
+  --error: #7a1d4d;
+  --error-soft: #f8e7ef;
+
+  /* --- FIX directions and flags ---------------------------------------- */
+  --in: #0a5f8f;
+  --out: #454f5c;
+  --disc: #7a3d8f;
+  --flag: #7c5300;
+  --fill: #0f6a37;
+
+  /* --- type ------------------------------------------------------------ */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+               Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", monospace;
+  --size-base: 15px;
+  --size-small: 13px;
+  --size-tiny: 12px;
+  --size-code: 13px;
+  --line: 1.6;
+  --line-tight: 1.45;
+
+  /* --- space and shape ------------------------------------------------- */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 40px;
+  --radius: 7px;
+  --radius-sm: 4px;
+
+  /* --- measure --------------------------------------------------------- */
+  --content: 860px;
+  --sidebar: 220px;
+  --wide: 1240px;
+
+  --shadow: 0 1px 2px rgba(16, 20, 30, 0.06);
+  --shadow-lifted: 0 8px 28px rgba(16, 20, 30, 0.16);
+  --scrim: rgba(16, 20, 30, 0.35);
+}
+
+/* ---------------------------------------------------------------- reset */
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--size-base);
+  line-height: var(--line);
+}
+a { color: var(--accent); }
+h1, h2, h3, h4 { line-height: var(--line-tight); margin: var(--s5) 0 var(--s3); }
+h1 { font-size: 24px; }
+h2 { font-size: 19px; }
+h3 { font-size: 16px; }
+code, pre, .mono { font-family: var(--font-mono); font-size: var(--size-code); }
+small, .muted { color: var(--muted); }
+.small { font-size: var(--size-small); }
+.tiny { font-size: var(--size-tiny); }
+
+/* ---------------------------------------------------------------- shell */
+
+.shell { display: grid; grid-template-columns: var(--sidebar) 1fr; min-height: 100vh; }
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: var(--s4) var(--s3);
+  position: sticky; top: 0; height: 100vh;
+}
+.brand { font-weight: 700; padding: 0 var(--s2) var(--s4); }
+.brand small { display: block; font-weight: 400; }
+.nav a {
+  display: block; padding: var(--s2) var(--s3); border-radius: var(--radius-sm);
+  color: var(--text); text-decoration: none; margin-bottom: 2px;
+}
+.nav a:hover { background: var(--surface-2); }
+.nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.nav .conn { margin-top: var(--s5); padding: 0 var(--s3); font-size: var(--size-tiny); color: var(--muted); }
+.content { padding: var(--s4) var(--s5) var(--s6); min-width: 0; max-width: var(--wide); }
+
+/* ---------------------------------------------------------------- blocks */
+
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: var(--s4); margin-bottom: var(--s4);
+}
+.card h2:first-child, .card h3:first-child { margin-top: 0; }
+.row { display: flex; gap: var(--s3); align-items: center; flex-wrap: wrap; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); }
+.spacer { flex: 1; }
+.notice {
+  border-left: 4px solid var(--accent); background: var(--accent-soft);
+  padding: var(--s2) var(--s3); border-radius: var(--radius-sm); margin: var(--s3) 0;
+}
+.notice.warn { border-color: var(--warn); background: var(--warn-soft); }
+.notice.fail { border-color: var(--fail); background: var(--fail-soft); }
+.notice.emulator { border-color: var(--flag); background: var(--warn-soft); font-weight: 600; }
+
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s4); margin: 0; }
+dl.kv dt { color: var(--muted); }
+dl.kv dd { margin: 0; overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------- tables */
+
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; background: var(--surface); }
+th, td { text-align: left; padding: var(--s1) var(--s2); border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--surface-2); font-size: var(--size-small); color: var(--muted); font-weight: 600; position: sticky; top: 0; }
+tbody tr:nth-child(even) td { background: var(--bg); }
+tbody tr.clickable { cursor: pointer; }
+tbody tr.clickable:hover td { background: var(--surface-3); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.ts { white-space: nowrap; }
+
+/* ---------------------------------------------------------------- badges */
+
+.badge {
+  display: inline-block; padding: 0 var(--s2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: var(--size-tiny); font-weight: 700;
+  line-height: 1.7; white-space: nowrap; background: var(--surface-2); color: var(--muted);
+}
+.badge.PASS, .badge.CERTIFIED, .badge.FILLED, .badge.ACTIVE { background: var(--pass-soft); color: var(--pass); border-color: var(--pass); }
+.badge.WARN, .badge.PARTIALLY_FILLED { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+.badge.FAIL, .badge.NOT-CERTIFIED, .badge.REJECTED { background: var(--fail-soft); color: var(--fail); border-color: var(--fail); }
+.badge.PENDING, .badge.INCOMPLETE, .badge.running { background: var(--pending-soft); color: var(--pending); border-color: var(--pending); }
+.badge.BLOCKED { background: var(--blocked-soft); color: var(--blocked); border-color: var(--blocked); }
+.badge.NA, .badge.NOT_RUN, .badge.CANCELED, .badge.DISCONNECTED { background: var(--na-soft); color: var(--na); border-color: var(--na); }
+.badge.ERROR, .badge.error { background: var(--error-soft); color: var(--error); border-color: var(--error); }
+.badge.NEW, .badge.SENT, .badge.finished { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.badge.in { color: var(--in); border-color: var(--in); background: var(--surface); }
+.badge.out { color: var(--out); border-color: var(--out); background: var(--surface); }
+.badge.disc { color: var(--disc); border-color: var(--disc); background: var(--surface); }
+.badge.INJECTED, .badge.POSSDUP, .badge.POSSRESEND { background: var(--warn-soft); color: var(--flag); border-color: var(--flag); }
+.badge.BAD-FRAMING { background: var(--fail-soft); color: var(--fail); border-color: var(--fail); }
+
+/* ---------------------------------------------------------------- verdict banner */
+
+.verdict {
+  border: 2px solid var(--border); border-radius: var(--radius); padding: var(--s4) var(--s5);
+  margin: var(--s4) 0; background: var(--surface);
+}
+.verdict .word { font-size: 28px; font-weight: 800; letter-spacing: 0.04em; }
+.verdict.CERTIFIED { border-color: var(--pass); background: var(--pass-soft); color: var(--pass); }
+.verdict.NOT-CERTIFIED { border-color: var(--fail); background: var(--fail-soft); color: var(--fail); }
+.verdict.INCOMPLETE { border-color: var(--pending); background: var(--pending-soft); color: var(--pending); }
+.verdict p { color: var(--text); margin: var(--s2) 0 0; }
+
+/* ---------------------------------------------------------------- forms */
+
+label { display: block; font-size: var(--size-small); color: var(--muted); margin-bottom: var(--s1); }
+input, select, textarea {
+  font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--s1) var(--s2);
+}
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.field { display: inline-block; margin: 0 var(--s3) var(--s3) 0; vertical-align: top; }
+.field input[type=text], .field input[type=number] { width: 9em; }
+textarea { width: 100%; min-height: 4em; }
+button, .button {
+  font: inherit; font-size: var(--size-small); font-weight: 600; cursor: pointer;
+  padding: var(--s1) var(--s3); border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); text-decoration: none;
+  display: inline-block;
+}
+button:hover, .button:hover { background: var(--surface-3); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.danger { color: var(--fail); border-color: var(--fail); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+/* ---------------------------------------------------------------- FIX feed */
+
+.feed { font-family: var(--font-mono); font-size: var(--size-code); }
+.feed .msg { display: grid; grid-template-columns: 7.5em 3.2em 4.2em 12em 1fr; gap: var(--s2);
+  padding: 2px var(--s2); border-bottom: 1px solid var(--surface-2); cursor: pointer; }
+.feed .msg:hover { background: var(--surface-3); }
+.feed .msg.head, .feed .msg.head:hover { cursor: default; background: transparent; font-weight: 600; }
+.feed .msg.in .dir { color: var(--in); }
+.feed .msg.out .dir { color: var(--out); }
+.feed .msg.disc .dir { color: var(--disc); }
+.feed .msg .line { overflow-wrap: anywhere; }
+pre.raw, .raw {
+  font-family: var(--font-mono); font-size: var(--size-code); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--s2) var(--s3);
+  white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--s2) 0;
+}
+
+/* ---------------------------------------------------------------- modal */
+
+.modal-back { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: flex-start;
+  justify-content: center; padding: var(--s6) var(--s4); z-index: 10; overflow-y: auto; }
+.modal { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-lifted);
+  padding: var(--s5); width: min(1000px, 100%); }
+.modal header { display: flex; align-items: center; gap: var(--s3); }
+.modal header h2 { margin: 0; flex: 1; }
+.hidden { display: none !important; }
+.toast { position: fixed; right: var(--s4); bottom: var(--s4); background: var(--surface); border: 1px solid var(--border);
+  border-left: 4px solid var(--accent); box-shadow: var(--shadow-lifted); padding: var(--s3) var(--s4);
+  border-radius: var(--radius-sm); max-width: 520px; z-index: 20; }
+.toast.error { border-left-color: var(--fail); }
+.progress { height: 8px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: hidden; }
+.progress > div { height: 100%; background: var(--accent); }
+
+/* ---------------------------------------------------------------- report */
+
+.report { max-width: var(--wide); margin: 0 auto; padding: var(--s5); }
+.report header.top h1 { margin-top: 0; }
+.report section { margin-top: var(--s5); }
+.report details.case { border: 1px solid var(--border); border-radius: var(--radius-sm); margin: var(--s1) 0; background: var(--surface); }
+.report details.case > summary { cursor: pointer; padding: var(--s1) var(--s2); list-style: none;
+  display: grid; grid-template-columns: 4em 1fr 4em 6em 7em 2fr; gap: var(--s2); align-items: baseline; }
+.report details.case > summary::-webkit-details-marker { display: none; }
+.report details.case[open] > summary { background: var(--surface-2); }
+.report .case-body { padding: var(--s2) var(--s3) var(--s3); }
+.report .case-body h4 { margin: var(--s3) 0 var(--s1); font-size: var(--size-small); color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.report .hash { font-family: var(--font-mono); font-size: var(--size-tiny); overflow-wrap: anywhere; }
+.report .tools { float: right; }
+.report footer { margin-top: var(--s6); color: var(--muted); font-size: var(--size-small); }
+
+/* ---------------------------------------------------------------- responsive */
+
+@media (max-width: 1100px) {
+  .shell { grid-template-columns: 180px 1fr; }
+  .content { padding: var(--s3); }
+  .grid2 { grid-template-columns: 1fr; }
+}
+
+/* ---------------------------------------------------------------- print */
+
+@media print {
+  @page { margin: 14mm; }
+  body { background: var(--surface); font-size: 11pt; }
+  .sidebar, .report .tools, button, .noprint { display: none !important; }
+  .shell { display: block; }
+  .report { padding: 0; max-width: none; }
+  .report section { break-before: page; }
+  .report section.first { break-before: auto; }
+  .report details.case { break-inside: avoid-page; }
+  .report details.case > summary { background: var(--surface-2); }
+  details::details-content { content-visibility: visible; display: block; }
+  pre.raw { white-space: pre-wrap; }
+  th { position: static; }
+  a { color: var(--text); text-decoration: none; }
+}
+
+</style>
+</head>
+<body>
+<main class="report">
+
+<header class="top">
+<div class="tools noprint"><button type="button" id="expand-all">Expand all</button> <button type="button" id="collapse-all">Collapse all</button></div>
+<p class="muted small">OrderEcho certification report</p>
+<h1>Order Entry Certification — FIX 4.2 US Equities</h1>
+<div class="card">
+<dl class="kv">
+<dt>Suite</dt><dd>order-entry-fix42 (certs/order_entry_fix42.yaml)</dd>
+<dt>Target</dt><dd>orderecho-emulator (certs/targets/emulator.yaml)</dd>
+<dt>Counterparty</dt><dd>OrderEcho FIX emulator 0.8.0 (cook8), control API http://127.0.0.1:8090</dd>
+<dt>Session</dt><dd>emu42 — FIX.4.2, AGENT → ORDERECHO @ 127.0.0.1:9878</dd>
+<dt>Run</dt><dd class="mono">20261001-120000.000</dd>
+<dt>Start (UTC)</dt><dd>2026-10-01T12:00:00.000Z</dd>
+<dt>End (UTC)</dt><dd>2026-10-01T12:00:09.000Z</dd>
+<dt>Agent</dt><dd>OrderEcho 0.5.0 (build a5)</dd>
+<dt>Exit code</dt><dd>0</dd>
+
+
+</dl>
+</div>
+</header>
+
+<section class="first" id="verdict">
+<div class="verdict CERTIFIED">
+<div class="word">CERTIFIED</div>
+<p>all 5 required case(s) are PASS or N/A.</p>
+</div>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th class="num"><span class="badge PASS">PASS</span></th><th class="num"><span class="badge FAIL">FAIL</span></th><th class="num"><span class="badge BLOCKED">BLOCKED</span></th><th class="num"><span class="badge PENDING">PENDING</span></th><th class="num"><span class="badge NA">N/A</span></th><th class="num"><span class="badge ERROR">ERROR</span></th><th class="num"><span class="badge NOT_RUN">NOT_RUN</span></th></tr></thead>
+<tbody>
+<tr><td>All cases</td><td class="num">5</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">1</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><td>Required cases</td><td class="num">5</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+</tbody>
+</table>
+</div>
+<p class="small muted">CERTIFIED: every required case of the suite is PASS or N/A. NOT CERTIFIED: a required case FAILED. INCOMPLETE: no required FAIL, but required cases are pending, blocked, in error or not run.</p>
+</section>
+
+<section class="first" id="sections">
+<h2>Summary by section</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Section</th><th>Name</th><th class="num">PASS</th><th class="num">FAIL</th><th class="num">BLOCKED</th><th class="num">PENDING</th><th class="num">N/A</th><th class="num">ERROR</th><th class="num">NOT_RUN</th><th class="num">Total</th></tr></thead>
+<tbody>
+<tr><td class="mono">ENV</td><td>Environment &amp; Connectivity</td><td class="num">1</td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num">1</td></tr>
+<tr><td class="mono">ORD</td><td>Order Entry</td><td class="num">1</td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num">1</td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num">2</td></tr>
+<tr><td class="mono">REJ</td><td>Reject Scenarios</td><td class="num">1</td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num">1</td></tr>
+<tr><td class="mono">SGN</td><td>Final Certification Sign-Off</td><td class="num">2</td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num"><span class="muted">·</span></td><td class="num">2</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="cases">
+<h2>Cases</h2>
+<p class="small muted">Each case expands to its steps, the messages that satisfied its expectations, the order checks, any attestation, and its FIX evidence (only this case's window of the session log).</p>
+<div class="report-cases">
+<details class="case" id="case-1.1">
+<summary><span class="mono">1.1</span><span>Cert environment details received</span><span class="small">req</span><span class="small">manual</span><span><span class="badge PASS">PASS</span></span><span class="small">attested pass by Dana Ops: cert host and docs received 2026-09-30</span></summary>
+<div class="case-body">
+<p class="small"><strong>Task:</strong> Obtain cert host, port and documentation package</p>
+
+<h4>Steps</h4>
+<div class="table-wrap"><table class="small">
+<thead><tr><th>#</th><th>Type</th><th>Time (UTC)</th><th>Outcome</th><th>Detail</th></tr></thead>
+<tbody><tr><td class="num">1</td><td>attestation</td><td class="mono tiny ts">2026-10-01T12:00:00.100Z</td><td><span class="badge PASS">PASS</span></td><td class="mono tiny">attested pass by Dana Ops: cert host and docs received 2026-09-30</td></tr></tbody>
+</table></div>
+
+
+<h4>Attestation</h4>
+<dl class="kv small"><dt>Status</dt><dd>pass</dd><dt>By</dt><dd>Dana Ops</dd><dt>When</dt><dd>2026-10-01T12:00:08.000Z</dd><dt>Note</dt><dd>cert host and docs received 2026-09-30</dd><dt>Source</dt><dd>attest.yaml</dd></dl>
+<h4>FIX evidence</h4>
+<p class="small muted">no FIX evidence: this case did not talk to the session (manual, PASS).</p>
+</div>
+</details>
+<details class="case" id="case-4.1">
+<summary><span class="mono">4.1</span><span>New Order Single — Market Buy</span><span class="small">req</span><span class="small">auto</span><span><span class="badge PASS">PASS</span></span><span class="small"></span></summary>
+<div class="case-body">
+<p class="small"><strong>Task:</strong> Submit a market buy order and confirm acknowledgement <span class="muted">· 2026-10-01T12:00:01.000Z → 2026-10-01T12:00:02.500Z</span></p>
+
+<h4>Steps</h4>
+<div class="table-wrap"><table class="small">
+<thead><tr><th>#</th><th>Type</th><th>Time (UTC)</th><th>Outcome</th><th>Detail</th></tr></thead>
+<tbody><tr><td class="num">1</td><td>send</td><td class="mono tiny ts">2026-10-01T12:00:01.100Z</td><td><span class="badge PASS">PASS</span></td><td class="mono tiny">D 11=OE-20261001-120000.000-1 buy 100 AAPL mkt</td></tr><tr><td class="num">2</td><td>expect</td><td class="mono tiny ts">2026-10-01T12:00:01.600Z</td><td><span class="badge PASS">PASS</span></td><td class="mono tiny">matched 35=8 seq=2 11=OE-20261001-120000.000-1 150=0 39=0</td></tr><tr><td class="num">3</td><td>expect</td><td class="mono tiny ts">2026-10-01T12:00:02.100Z</td><td><span class="badge PASS">PASS</span></td><td class="mono tiny">matched 35=8 seq=3 11=OE-20261001-120000.000-1 150=2 39=2 32=100 31=227.50</td></tr><tr><td class="num">4</td><td>checks</td><td class="mono tiny ts">2026-10-01T12:00:02.200Z</td><td><span class="badge PASS">PASS</span></td><td class="mono tiny">timeline: 1 chain(s), all 11 checks PASS</td></tr></tbody>
+</table></div>
+<h4>Expectations matched</h4>
+<ul class="small mono"><li>35=8 seq=2 11=OE-20261001-120000.000-1 150=0 39=0</li><li>35=8 seq=3 11=OE-20261001-120000.000-1 150=2 39=2 32=100 31=227.50</li></ul>
+<h4>Order checks</h4>
+<p class="small"><strong>_1</strong> <span class="mono">OE-20261001-120000.000-1</span> — verdict <span class="badge PASS">PASS</span></p>
+<div class="table-wrap"><table class="small"><thead><tr><th>Check</th><th>Status</th><th>Explanation</th></tr></thead>
+<tbody><tr><td class="mono">cum_qty_monotonic</td><td><span class="badge PASS">PASS</span></td><td>cum_qty_monotonic holds for every report of the chain</td></tr><tr><td class="mono">working_quantities</td><td><span class="badge PASS">PASS</span></td><td>working_quantities holds for every report of the chain</td></tr><tr><td class="mono">terminal_quantities</td><td><span class="badge PASS">PASS</span></td><td>terminal_quantities holds for every report of the chain</td></tr><tr><td class="mono">fill_quantities_sum</td><td><span class="badge PASS">PASS</span></td><td>fill_quantities_sum holds for every report of the chain</td></tr><tr><td class="mono">avg_px</td><td><span class="badge PASS">PASS</span></td><td>avg_px holds for every report of the chain</td></tr><tr><td class="mono">exec_ids_unique</td><td><span class="badge PASS">PASS</span></td><td>exec_ids_unique holds for every report of the chain</td></tr><tr><td class="mono">order_id_constant</td><td><span class="badge PASS">PASS</span></td><td>order_id_constant holds for every report of the chain</td></tr><tr><td class="mono">nothing_after_terminal</td><td><span class="badge PASS">PASS</span></td><td>nothing_after_terminal holds for every report of the chain</td></tr><tr><td class="mono">version_rules</td><td><span class="badge PASS">PASS</span></td><td>version_rules holds for every report of the chain</td></tr><tr><td class="mono">requests_answered</td><td><span class="badge PASS">PASS</span></td><td>requests_answered holds for every report of the chain</td></tr><tr><td class="mono">framing_intact</td><td><span class="badge PASS">PASS</span></td><td>framing_intact holds for every report of the chain</td></tr></tbody></table></div>
+
+
+<h4>FIX evidence</h4>
+<div class="table-wrap"><table class="small">
+<thead><tr><th>Time (UTC)</th><th>Dir</th><th>Seq</th><th>Message</th><th></th></tr></thead>
+<tbody><tr><td class="mono tiny ts">20261001-12:00:01.100</td><td><span class="badge out">out</span></td><td class="num mono">2</td><td class="mono tiny">NewOrderSingle ClOrdID=OE-20261001-120000.000-1 Symbol=AAPL Side=1(Buy) OrderQty=100 OrdType=1(Market)</td><td></td></tr><tr><td class="mono tiny ts">20261001-12:00:01.600</td><td><span class="badge in">in</span></td><td class="num mono">2</td><td class="mono tiny">ExecutionReport ClOrdID=OE-20261001-120000.000-1 OrderID=O-1 ExecType=0(New) OrdStatus=0(New) Symbol=AAPL LastQty=0 LastPx=0 CumQty=0 LeavesQty=100 AvgPx=0</td><td></td></tr><tr><td class="mono tiny ts">20261001-12:00:02.100</td><td><span class="badge in">in</span></td><td class="num mono">3</td><td class="mono tiny">ExecutionReport ClOrdID=OE-20261001-120000.000-1 OrderID=O-1 ExecType=2(Fill) OrdStatus=2(Filled) Symbol=AAPL LastQty=100 LastPx=227.50 CumQty=100 LeavesQty=0 AvgPx=227.5000</td><td></td></tr></tbody>
+</table></div>
+<pre class="raw">20261001-12:00:01.100 OUT  seq=2    35=D  8=FIX.4.2|9=140|35=D|49=AGENT|56=ORDERECHO|34=2|52=20261001-12:00:01.100|11=OE-20261001-120000.000-1|21=1|55=AAPL|54=1|60=20261001-12:00:01.099|38=100|40=1|10=101|
+20261001-12:00:01.600 IN   seq=2    35=8  8=FIX.4.2|9=250|35=8|49=ORDERECHO|56=AGENT|34=2|52=20261001-12:00:01.600|37=O-1|11=OE-20261001-120000.000-1|17=E-1|20=0|150=0|39=0|55=AAPL|54=1|38=100|40=1|32=0|31=0|151=100|14=0|6=0|10=102|
+20261001-12:00:02.100 IN   seq=3    35=8  8=FIX.4.2|9=260|35=8|49=ORDERECHO|56=AGENT|34=3|52=20261001-12:00:02.100|37=O-1|11=OE-20261001-120000.000-1|17=E-2|20=0|150=2|39=2|55=AAPL|54=1|38=100|40=1|32=100|31=227.50|151=0|14=100|6=227.5000|10=103|
+</pre>
+<p class="tiny muted">4.1/fix.log: 3 line(s); 4.1/evidence.jsonl: 2 record(s).</p>
+</div>
+</details>
+<details class="case" id="case-4.5">
+<summary><span class="mono">4.5</span><span>NOS — GTC limit</span><span class="small">opt</span><span class="small">auto</span><span><span class="badge NA">N/A</span></span><span class="small">target orderecho-emulator: Emulator supports TimeInForce Day only</span></summary>
+<div class="case-body">
+<p class="small"><strong>Task:</strong> Submit a GTC limit order</p>
+
+<h4>Steps</h4>
+<p class="small muted">No steps recorded.</p>
+
+
+
+<h4>FIX evidence</h4>
+<p class="small muted">no FIX evidence: this case did not talk to the session (auto, N/A).</p>
+</div>
+</details>
+<details class="case" id="case-7.8">
+<summary><span class="mono">7.8</span><span>Business Message Reject</span><span class="small">req</span><span class="small">auto</span><span><span class="badge PASS">PASS</span></span><span class="small"></span></summary>
+<div class="case-body">
+<p class="small"><strong>Task:</strong> Send a message missing a conditionally required field; expect 35=j &lt;script&gt;alert(1)&lt;/script&gt; <span class="muted">· 2026-10-01T12:00:04.900Z → 2026-10-01T12:00:05.300Z</span></p>
+<div class="notice warn small"><div>step 3 (assert_received): recommended tag(s) absent: 379</div></div>
+<h4>Steps</h4>
+<div class="table-wrap"><table class="small">
+<thead><tr><th>#</th><th>Type</th><th>Time (UTC)</th><th>Outcome</th><th>Detail</th></tr></thead>
+<tbody><tr><td class="num">1</td><td>send</td><td class="mono tiny ts">2026-10-01T12:00:05.000Z</td><td><span class="badge PASS">PASS</span></td><td class="mono tiny">raw seq=5 35=D|11=OE-20261001-120000.000-R1|55=AAPL</td></tr><tr><td class="num">2</td><td>expect</td><td class="mono tiny ts">2026-10-01T12:00:05.200Z</td><td><span class="badge PASS">PASS</span></td><td class="mono tiny">matched 35=j seq=5 45=5 380=5</td></tr><tr><td class="num">3</td><td>assert_received</td><td class="mono tiny ts">2026-10-01T12:00:05.210Z</td><td><span class="badge WARN">WARN</span></td><td class="mono tiny">35=j has 45, 380; recommended tag(s) absent: 379</td></tr></tbody>
+</table></div>
+<h4>Expectations matched</h4>
+<ul class="small mono"><li>35=j seq=5 45=5 380=5</li></ul>
+
+
+<h4>FIX evidence</h4>
+<div class="table-wrap"><table class="small">
+<thead><tr><th>Time (UTC)</th><th>Dir</th><th>Seq</th><th>Message</th><th></th></tr></thead>
+<tbody><tr><td class="mono tiny ts">20261001-12:00:05.000</td><td><span class="badge out">out</span></td><td class="num mono">5</td><td class="mono tiny">NewOrderSingle ClOrdID=OE-20261001-120000.000-R1 Symbol=AAPL</td><td><span class="badge INJECTED">INJECTED</span> </td></tr><tr><td class="mono tiny ts">20261001-12:00:05.200</td><td><span class="badge in">in</span></td><td class="num mono">5</td><td class="mono tiny">BusinessMessageReject RefSeqNum=5 RefMsgType=D BusinessRejectReason=5(Conditionally required field missing) Text=Conditionally required field missing</td><td><span class="badge POSSDUP">POSSDUP</span> </td></tr></tbody>
+</table></div>
+<pre class="raw">20261001-12:00:05.000 OUT  seq=5    35=D  8=FIX.4.2|9=90|35=D|49=AGENT|56=ORDERECHO|34=5|52=20261001-12:00:05.000|11=OE-20261001-120000.000-R1|55=AAPL|10=104|  # injected: deliberately incomplete
+20261001-12:00:05.200 IN   seq=5    35=j  8=FIX.4.2|9=110|35=j|49=ORDERECHO|56=AGENT|34=5|52=20261001-12:00:05.200|45=5|372=D|380=5|58=Conditionally required field missing|43=Y|10=105|
+</pre>
+<p class="tiny muted">7.8/fix.log: 2 line(s); 7.8/evidence.jsonl: 1 record(s).</p>
+</div>
+</details>
+<details class="case" id="case-9.1">
+<summary><span class="mono">9.1</span><span>All required tests passed</span><span class="small">req</span><span class="small">auto</span><span><span class="badge PASS">PASS</span></span><span class="small">all 4 other required case(s) are PASS or N/A</span></summary>
+<div class="case-body">
+<p class="small"><strong>Task:</strong> Confirm all Required tests have status = Pass before submitting for certification</p>
+
+<h4>Steps</h4>
+<div class="table-wrap"><table class="small">
+<thead><tr><th>#</th><th>Type</th><th>Time (UTC)</th><th>Outcome</th><th>Detail</th></tr></thead>
+<tbody><tr><td class="num">1</td><td>review</td><td class="mono tiny ts">2026-10-01T12:00:09.000Z</td><td><span class="badge PASS">PASS</span></td><td class="mono tiny">all 4 other required case(s) are PASS or N/A</td></tr></tbody>
+</table></div>
+
+
+
+<h4>FIX evidence</h4>
+<p class="small muted">no FIX evidence: this case did not talk to the session (auto, PASS).</p>
+</div>
+</details>
+<details class="case" id="case-9.2">
+<summary><span class="mono">9.2</span><span>Venue deviations documented</span><span class="small">req</span><span class="small">assisted</span><span><span class="badge PASS">PASS</span></span><span class="small">attested pass by Dana Ops: draft reviewed, sent to the venue</span></summary>
+<div class="case-body">
+<p class="small"><strong>Task:</strong> Document any exchange-specific behavior deviations from FIX 4.2 spec</p>
+
+<h4>Steps</h4>
+<div class="table-wrap"><table class="small">
+<thead><tr><th>#</th><th>Type</th><th>Time (UTC)</th><th>Outcome</th><th>Detail</th></tr></thead>
+<tbody><tr><td class="num">1</td><td>review</td><td class="mono tiny ts">2026-10-01T12:00:09.000Z</td><td><span class="badge PASS">PASS</span></td><td class="mono tiny">deviations drafted: 1 N/A reason(s), 1 distinct warning(s) (deviations.md)</td></tr><tr><td class="num">2</td><td>attestation</td><td class="mono tiny ts">2026-10-01T12:00:09.000Z</td><td><span class="badge PASS">PASS</span></td><td class="mono tiny">attested pass by Dana Ops: draft reviewed, sent to the venue</td></tr></tbody>
+</table></div>
+
+
+<h4>Attestation</h4>
+<dl class="kv small"><dt>Status</dt><dd>pass</dd><dt>By</dt><dd>Dana Ops</dd><dt>When</dt><dd>2026-10-01T12:00:08.500Z</dd><dt>Note</dt><dd>draft reviewed, sent to the venue</dd><dt>Source</dt><dd>attest.yaml</dd></dl>
+<h4>FIX evidence</h4>
+<p class="small muted">no FIX evidence: this case did not talk to the session (assisted, PASS).</p>
+</div>
+</details>
+</div>
+</section>
+
+<section id="deviations">
+<h2>Deviations</h2>
+<p class="small muted">Drafted by the runner from this run's N/A reasons and warnings (case 9.2); a human reviews and attests it.</p>
+<h3>Not applicable</h3>
+<ul><li>target orderecho-emulator: Emulator supports TimeInForce Day only — case(s) 4.5</li></ul>
+<h3>Warnings</h3>
+<ul><li class="mono small">recommended tag(s) absent: 379 — case(s) 7.8</li></ul>
+
+<h3>N/A cases</h3>
+<div class="table-wrap"><table class="small"><thead><tr><th>Case</th><th>Title</th><th>Reason</th></tr></thead>
+<tbody><tr><td class="mono"><a href="#case-4.5">4.5</a></td><td>NOS — GTC limit</td><td>target orderecho-emulator: Emulator supports TimeInForce Day only</td></tr></tbody></table></div>
+</section>
+
+<section id="attestations">
+<h2>Attestations</h2>
+<div class="table-wrap"><table class="small"><thead><tr><th>Case</th><th>Status</th><th>By</th><th>When (UTC)</th><th>Note</th><th>Source</th><th>Case result</th></tr></thead>
+<tbody><tr><td class="mono"><a href="#case-1.1">1.1</a></td><td>pass</td><td>Dana Ops</td><td class="mono tiny ts">2026-10-01T12:00:08.000Z</td><td>cert host and docs received 2026-09-30</td><td class="tiny">attest.yaml</td><td><span class="badge PASS">PASS</span></td></tr><tr><td class="mono"><a href="#case-9.2">9.2</a></td><td>pass</td><td>Dana Ops</td><td class="mono tiny ts">2026-10-01T12:00:08.500Z</td><td>draft reviewed, sent to the venue</td><td class="tiny">attest.yaml</td><td><span class="badge PASS">PASS</span></td></tr></tbody></table></div>
+
+</section>
+
+<section id="integrity">
+<h2>Integrity appendix</h2>
+<p class="small">SHA-256 digests recorded at run end. <span class="mono">results.json</span>'s own digest is kept in <span class="mono">results.sha256</span>; every other digest is inside <span class="mono">results.json</span>. To check them all: <code>orderecho cert verify 20261001-120000.000</code> (exit 0: intact, 9: tampered).</p>
+<div class="table-wrap"><table class="small"><thead><tr><th>File</th><th>SHA-256</th></tr></thead>
+<tbody><tr><td class="mono">results.json</td><td class="hash">3b842ab6092957c14bd08d39df859b934eb3dedc0085bce84435d5dc500e333a</td></tr>
+<tr><td class="mono">4.1/evidence.jsonl</td><td class="hash">35e5910fe0220e6e4af2209195839278dd5d39001a8104b4f594e740dbaf2fa7</td></tr>
+<tr><td class="mono">4.1/fix.log</td><td class="hash">78eb4ac4c53f2ab7f75f1e600a59bcc8c13e9cf17443f6bcf28fec28fe3a4619</td></tr>
+<tr><td class="mono">7.8/evidence.jsonl</td><td class="hash">563467653623284fae67415caab02535acd418b9fccee7dcd66977c38c93100d</td></tr>
+<tr><td class="mono">7.8/fix.log</td><td class="hash">cff8ccf4fb5780c82b6e46116dd5f1b445d66684d494684d727174e30e2b885e</td></tr>
+</tbody></table></div>
+
+</section>
+
+<footer>Generated from results.json and the per-case evidence by OrderEcho (report format 1). Statuses, reasons and checks are the runner's; nothing in this report is judged by hand except where an attestation says so.</footer>
+</main>
+<script>
+(function () {
+  function all(open) { document.querySelectorAll('details.case').forEach(function (d) { d.open = open; }); }
+  var e = document.getElementById('expand-all'), c = document.getElementById('collapse-all');
+  if (e) e.addEventListener('click', function () { all(true); });
+  if (c) c.addEventListener('click', function () { all(false); });
+  window.addEventListener('beforeprint', function () { all(true); });
+})();
+</script>
+</body>
+</html>

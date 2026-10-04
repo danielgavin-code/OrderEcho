@@ -20,6 +20,9 @@ const (
 	GroupCore     = "core"
 	GroupOrders   = "orders"   // mcp.allow_orders
 	GroupEmulator = "emulator" // mcp.allow_emulator_tools + emulator.control_api
+	// GroupAPIOnly operations are served on /api/v1 (the GUI uses them) but
+	// never registered as MCP tools (A5 adds no MCP tool but cert_run_report).
+	GroupAPIOnly = "api-only"
 )
 
 // Tool is one catalogue entry.
@@ -152,6 +155,12 @@ type EmuOrderArgs struct {
 	OrderID string `json:"order_id" jsonschema:"the emulator's OrderID (tag 37) from send_order or list_orders, not the ClOrdID"`
 }
 
+// EmuSeqGapArgs is emulator_inject_seq_gap's input (API only).
+type EmuSeqGapArgs struct {
+	Session string `json:"session" jsonschema:"our session id (e.g. emu42) or the emulator's own id for it"`
+	Skip    int    `json:"skip" jsonschema:"how many outbound sequence numbers the emulator skips (1-100)"`
+}
+
 // EmuInjectArgs is emulator_inject_next's input.
 type EmuInjectArgs struct {
 	Session string            `json:"session" jsonschema:"our session id (e.g. emu42) or the emulator's own id for it (e.g. agent42)"`
@@ -199,6 +208,8 @@ func catalogue() []*Tool {
 			Description: "Progress of a certification run: state (running, finished, error), cases done / total, the case running now, and the counts by status so far (PASS, FAIL, BLOCKED, PENDING, N/A, ERROR). When state is finished or error, call cert_run_results."},
 		{Name: "cert_run_results", Title: "Certification run results", Group: GroupCore, ReadOnly: true, input: typeOf[ResultsArgs](),
 			Description: "Results of a finished certification run: counts by status (all cases and required cases), the exit code and what it means, the failing and pending cases with their reasons, which cases a human may attest, the drafted deviations section, and where the evidence is on disk (results.json, summary.txt, deviations.md, one folder per case). Quote reasons as given; do not upgrade a FAIL or PENDING."},
+		{Name: "cert_run_report", Title: "Certification report", Group: GroupCore, ReadOnly: true, input: typeOf[RunArgs](),
+			Description: "The human-readable certification report of a finished run: a single HTML file with the verdict (CERTIFIED, NOT CERTIFIED or INCOMPLETE), counts, every case with its steps, checks, attestations and FIX evidence, the deviations, and an integrity appendix of SHA-256 digests. Returns the file's path, the URL to open it in a browser (served by the agent on this machine), the verdict with its reason, and the counts. Use it when the human wants something to read, print or hand to the counterparty or compliance. The report is written automatically when a run ends and again after every attestation; quote its verdict as given."},
 		{Name: "attest_cert_case", Title: "Record a human attestation", Group: GroupCore, Destructive: true, input: typeOf[AttestArgs](),
 			Description: "Records a human's attestation for one manual or assisted case of a finished run (e.g. environment, credentials, sign-off, the deviations review), then recomputes the run's summary and exit code. ALWAYS ask the human first: show them the case and what it asks, get their explicit answer (pass, fail or na) and their name, and only then call this with user_confirmed: true. Never attest on your own judgement, never invent the name, and never set user_confirmed without their explicit confirmation; calls without it are rejected. Cases decided by code (auto, or assisted cases whose control steps ran) cannot be attested."},
 		{Name: "emulator_fill_order", Title: "Emulator: fill an order", Group: GroupEmulator, OpenWorld: true, input: typeOf[EmuFillArgs](),
@@ -207,6 +218,8 @@ func catalogue() []*Tool {
 			Description: "Acts on the counterparty EMULATOR, not on a real venue: the emulator cancels one of its working orders on its own initiative (an unsolicited cancel), which sends us a Canceled execution report. To cancel an order yourself, use cancel_order instead. order_id is the emulator's OrderID (tag 37)."},
 		{Name: "emulator_hold_order", Title: "Emulator: hold an order", Group: GroupEmulator, OpenWorld: true, Idempotent: true, input: typeOf[EmuOrderArgs](),
 			Description: "Acts on the counterparty EMULATOR, not on a real venue: stops the emulator's scheduled reports for one order and leaves it working, so you can then fill, cancel or replace it step by step. order_id is the emulator's OrderID (tag 37)."},
+		{Name: "emulator_inject_seq_gap", Title: "Emulator: skip outbound seqnums", Group: GroupAPIOnly, OpenWorld: true, Destructive: true, input: typeOf[EmuSeqGapArgs](),
+			Description: "Acts on the counterparty EMULATOR, not on a real venue: the emulator skips outbound sequence numbers on one session, so the agent must detect the gap and send a ResendRequest. Served on the HTTP API for the GUI's emulator panel; not an MCP tool."},
 		{Name: "emulator_inject_next", Title: "Emulator: alter its next message", Group: GroupEmulator, OpenWorld: true, Destructive: true, input: typeOf[EmuInjectArgs](),
 			Description: "Acts on the counterparty EMULATOR, not on a real venue: makes the emulator alter the next message it sends us on one session (optionally only the next of a MsgType), setting or removing tags, to test how the agent and its checks react to a bad counterparty message. The alteration applies once."},
 	}
@@ -255,6 +268,8 @@ func buildSchema(t *Tool) error {
 	switch t.Name {
 	case "attest_cert_case":
 		s.Properties["status"].Enum = []any{"pass", "fail", "na"}
+	case "emulator_inject_seq_gap":
+		s.Properties["skip"].Minimum, s.Properties["skip"].Maximum = f64(1), f64(100)
 	case "list_orders":
 		s.Properties["status"].Enum = []any{"open", "terminal", "all", "SENT", "NEW", "PARTIALLY_FILLED", "FILLED", "CANCELED", "REJECTED", "PENDING_CANCEL", "PENDING_REPLACE"}
 	}

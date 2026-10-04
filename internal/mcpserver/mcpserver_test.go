@@ -76,11 +76,12 @@ func TestToolsOverMCPWithAnnotations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Tools) != 20 {
+	if len(list.Tools) != 21 { // A5: + cert_run_report
 		t.Fatalf("%d tools", len(list.Tools))
 	}
 	readOnly := map[string]bool{"list_sessions": true, "session_status": true, "list_orders": true, "order_timeline": true,
-		"recent_messages": true, "list_cert_suites": true, "list_cert_targets": true, "cert_run_status": true, "cert_run_results": true}
+		"recent_messages": true, "list_cert_suites": true, "list_cert_targets": true, "cert_run_status": true, "cert_run_results": true,
+		"cert_run_report": true}
 	sideEffects := []string{"send_order", "cancel_order", "replace_order", "attest_cert_case", "emulator_fill_order",
 		"emulator_cancel_order", "emulator_hold_order", "emulator_inject_next", "start_cert_run", "connect_session", "disconnect_session"}
 	for _, tl := range list.Tools {
@@ -160,7 +161,7 @@ func TestConfigSwitchesToolsOff(t *testing.T) {
 			t.Fatalf("%s registered", tl.Name)
 		}
 	}
-	if len(list.Tools) != 12 {
+	if len(list.Tools) != 13 { // A5: + cert_run_report
 		t.Fatalf("%d tools", len(list.Tools))
 	}
 }

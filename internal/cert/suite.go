@@ -30,8 +30,8 @@ const (
 
 // Section is one checklist section.
 type Section struct {
-	ID   string
-	Name string
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // Suite is a loaded, validated suite.

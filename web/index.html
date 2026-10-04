@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="orderecho-csrf" content="{{CSRF}}">
+<meta name="orderecho-page" content="{{PAGE}}">
+<title>OrderEcho agent</title>
+<link rel="stylesheet" href="/assets/orderecho.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">OrderEcho agent<small class="muted">{{VERSION}}</small></div>
+    <nav class="nav" aria-label="Pages">
+      <a href="/" data-page="dashboard">Dashboard</a>
+      <a href="/orders" data-page="orders">Orders</a>
+      <a href="/messages" data-page="messages">Messages</a>
+      <a href="/certifications" data-page="certifications">Certifications</a>
+      <a href="/emulator" data-page="emulator" id="nav-emulator" class="hidden">Emulator</a>
+      <a href="/about" data-page="about">About</a>
+      <div class="conn" id="conn">live updates: connecting…</div>
+    </nav>
+  </aside>
+  <main class="content" id="app" data-page="{{PAGE}}">
+    <noscript><p class="notice warn">The agent GUI needs JavaScript. Certification reports (data/certs/&lt;run_id&gt;/report.html) read without it.</p></noscript>
+  </main>
+</div>
+<div id="modal" class="modal-back hidden" role="dialog" aria-modal="true"></div>
+<div id="toast" class="toast hidden" role="status"></div>
+<script src="/assets/app.js"></script>
+</body>
+</html>

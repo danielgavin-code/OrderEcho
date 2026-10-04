@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/danielgavin-code/OrderEcho/internal/version"
 )
 
 // A4 interop: the real emulator, the real agent service, and a real MCP
@@ -259,7 +261,7 @@ func TestMCPStdioOrdersAndEmulatorTools(t *testing.T) {
 	}
 	c := stdioClient(t, dir)
 	h, err := serviceHealth(port)
-	if err != nil || h.Version != "0.4.0" {
+	if err != nil || h.Version != version.Version {
 		t.Fatalf("orderecho mcp did not start the service: %v", err)
 	}
 	if !strings.Contains(c.stderr.String(), "no agent service on") {
@@ -269,7 +271,7 @@ func TestMCPStdioOrdersAndEmulatorTools(t *testing.T) {
 		t.Fatalf("service output not under logs/engine: %v", outs)
 	}
 	tools, err := c.cs.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 20 {
+	if err != nil || len(tools.Tools) != 21 { // A5: + cert_run_report
 		t.Fatalf("%v %d tools", err, len(tools.Tools))
 	}
 

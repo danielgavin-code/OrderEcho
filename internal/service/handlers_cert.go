@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/danielgavin-code/OrderEcho/internal/agent"
 	"github.com/danielgavin-code/OrderEcho/internal/cert"
+	"github.com/danielgavin-code/OrderEcho/internal/fix/codec"
+	"github.com/danielgavin-code/OrderEcho/internal/report"
 )
 
 // Run states.
@@ -53,6 +56,7 @@ type runState struct {
 	done    chan struct{}
 	res     *cert.RunResult
 	attest  sync.Mutex // serializes attestations on this run
+	events  *hub       // cert progress events (nil for runs read from disk)
 }
 
 func (r *runState) state() string {
@@ -75,6 +79,9 @@ func (r *runState) snapshot() RunInfo {
 func (r *runState) save() {
 	info := r.snapshot()
 	_ = writeJSON(filepath.Join(info.Dir, "run.json"), info)
+	if r.events != nil {
+		r.events.publish(EvCert, info)
+	}
 }
 
 // abort stops a running run: the case in progress ends when the session is
@@ -111,6 +118,9 @@ func (s *Service) recoverRuns() {
 			res.RunError = "service restarted"
 			res.Exit = cert.ExitCode(res, 0)
 			_ = cert.WriteResults(filepath.Dir(p), res)
+		}
+		if exists(filepath.Join(filepath.Dir(p), "results.json")) {
+			_, _, _ = report.Write(filepath.Dir(p))
 		}
 		s.Log.Warning("engine", fmt.Sprintf("cert run %s was in progress when the service stopped: marked ERROR: service restarted", info.RunID))
 		s.ev.Event(info.SessionID, "cert run recovered", fmt.Sprintf("%s marked ERROR: service restarted", info.RunID), false)
@@ -320,7 +330,7 @@ func hStartRun(_ context.Context, s *Service, c *call) (any, string, *APIError) 
 
 	r := &runState{done: make(chan struct{}), info: RunInfo{RunID: runID, State: RunRunning, Suite: su.Name, SuiteFile: su.File,
 		Target: tg.Name, TargetFile: tg.File, SessionID: st.cfg.ID, Started: time.Now().UTC().Format(time.RFC3339),
-		Total: total, Counts: map[string]int{}, Dir: filepath.Join(s.certsDir(), runID), StartedBy: c.client}}
+		Total: total, Counts: map[string]int{}, Dir: filepath.Join(s.certsDir(), runID), StartedBy: c.client}, events: s.events}
 	// The run takes the session over.
 	if cur := st.current(); cur != nil && !cur.closed() {
 		r.info.TookOver = cur.connected()
@@ -353,6 +363,7 @@ func (s *Service) execute(st *sessState, r *runState, su *cert.Suite, tg *cert.T
 	res, dir, err := cert.Execute(cert.ExecOptions{
 		Ctx: s.ctx, Config: s.cfg, Session: st.cfg, Suite: su, Target: tg, Select: sel, RunID: r.info.RunID,
 		CaseTimeout: 60 * time.Second,
+		OnWire:      func(dir string, m *codec.Message) { s.publishMessage(st.cfg, dir, m, false) },
 		OnAgent: func(a *agent.Agent) {
 			r.mu.Lock()
 			r.a = a
@@ -404,6 +415,12 @@ func (s *Service) execute(st *sessState, r *runState, su *cert.Suite, tg *cert.T
 	}
 	info := r.info
 	r.mu.Unlock()
+	if res != nil && exists(filepath.Join(dir, "results.json")) {
+		// A5 §3.1: the report is written as soon as the run is over.
+		if _, _, rerr := report.Write(dir); rerr != nil {
+			s.Log.Warning("engine", fmt.Sprintf("cert run %s: report not written: %v", info.RunID, rerr))
+		}
+	}
 	r.save()
 	counts := ""
 	if res != nil {
@@ -652,6 +669,15 @@ func hAttest(_ context.Context, s *Service, c *call) (any, string, *APIError) {
 	}
 	r.attest.Lock()
 	defer r.attest.Unlock()
+	// Never re-seal evidence that changed since the run: verify first.
+	if vr, verr := cert.Verify(info.Dir); verr == nil && !vr.OK {
+		var bad []string
+		for _, f := range vr.Problems() {
+			bad = append(bad, f.Path+" "+f.Status)
+		}
+		return nil, "", apiErr(409, "tampered", fmt.Sprintf("run 'orderecho cert verify %s' and investigate; a run whose evidence changed cannot take attestations", in.RunID),
+			"cert run %s does not verify: %s", in.RunID, strings.Join(bad, ", "))
+	}
 	res, err := loadResults(info.Dir)
 	if err != nil {
 		return nil, "", apiErr(409, "no_results", "only a run that wrote results.json can be attested", "cert run %s has no results: %v", in.RunID, err)
@@ -671,6 +697,9 @@ func hAttest(_ context.Context, s *Service, c *call) (any, string, *APIError) {
 	res.Exit = cert.ExitCode(res, 0)
 	if err := cert.WriteResults(info.Dir, res); err != nil {
 		return nil, "", apiErr(500, "write_failed", "check the certs directory is writable", "writing results: %v", err)
+	}
+	if _, _, err := report.Write(info.Dir); err != nil {
+		s.Log.Warning("engine", fmt.Sprintf("cert run %s: report not regenerated after attestation: %v", in.RunID, err))
 	}
 	// An audit trail of every attestation made through the service.
 	if f, err := os.OpenFile(filepath.Join(info.Dir, "attestations.jsonl"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
@@ -702,4 +731,47 @@ func hAttest(_ context.Context, s *Service, c *call) (any, string, *APIError) {
 	summary := fmt.Sprintf("case %s attested %s by %s -> %s; run now %s; exit %d (%s)", in.CaseID, a.Status, a.By, caseRow.Status,
 		cert.CountsLine(res.Counts), res.Exit, exitMeaning(res.Exit))
 	return out, summary, nil
+}
+
+// reportURL is where the service serves a run's report.
+func (s *Service) reportURL(runID string) string {
+	return s.cfg.Service.URL() + "/certs/" + url.PathEscape(runID) + "/report"
+}
+
+// ensureReport returns the run's report model, writing report.html when it
+// is missing (runs from before 0.5.0, or from the CLI of an older build).
+func (s *Service) ensureReport(dir string) (string, *report.Model, error) {
+	path := filepath.Join(dir, report.FileName)
+	if exists(path) {
+		m, err := report.Build(dir)
+		return path, m, err
+	}
+	return report.Write(dir)
+}
+
+func hRunReport(_ context.Context, s *Service, c *call) (any, string, *APIError) {
+	var in RunArgs
+	if e := c.decode(&in); e != nil {
+		return nil, "", e
+	}
+	r, e := s.run(in.RunID)
+	if e != nil {
+		return nil, "", e
+	}
+	info := r.snapshot()
+	if info.State == RunRunning {
+		return nil, "", apiErr(409, "run_in_progress", fmt.Sprintf("poll cert_run_status {run_id: %q} until it is finished; the report is written when the run ends", in.RunID),
+			"cert run %s is still running (%d/%d done)", in.RunID, info.Done, info.Total)
+	}
+	if !exists(filepath.Join(info.Dir, "results.json")) {
+		return nil, "", apiErr(409, "no_results", "cert_run_status shows why the run wrote nothing", "cert run %s has no results to report", in.RunID)
+	}
+	path, m, err := s.ensureReport(info.Dir)
+	if err != nil {
+		return nil, "", apiErr(500, "report_failed", "check the run directory", "report for %s: %v", in.RunID, err)
+	}
+	u := s.reportURL(in.RunID)
+	out := map[string]any{"run_id": in.RunID, "path": path, "url": u, "verdict": m.Verdict, "verdict_reason": m.VerdictReason,
+		"counts": m.Res.Counts, "required_counts": m.Res.Required, "exit_code": m.Res.Exit, "sealed": m.Sealed}
+	return out, fmt.Sprintf("report for cert run %s: %s (%s); open %s (file %s)", in.RunID, m.Verdict, m.VerdictReason, u, path), nil
 }

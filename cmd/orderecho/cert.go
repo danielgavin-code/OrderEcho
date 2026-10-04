@@ -2,8 +2,13 @@ package main
 
 import (
 	"context"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+
 	"flag"
 	"fmt"
+	"github.com/danielgavin-code/OrderEcho/internal/report"
 	"io"
 	"os"
 	"os/signal"
@@ -26,6 +31,13 @@ const certUsage = `usage: orderecho cert <list|show|run> [flags]
   cert run --suite FILE --target FILE --session ID
            [--case 4.1,4.3 | --section ORD] [--attest FILE] [--stop-on-fail]
            [--var k=v ...] [--case-timeout 60s] [--verbose]
+                                         (writes data/certs/<run_id>/report.html at the end)
+  cert report <run_id|results_dir> [--open]
+                                         (re)write the run's report.html; --open shows it
+  cert verify <run_id|results_dir>       recompute the run's SHA-256 digests
+
+cert verify exit codes: 0 intact, 9 tampered (a digest differs, a file is missing or unrecorded),
+  2 usage error or a run with no integrity record (written before 0.5.0).
 
 cert run exit codes:
   0  every required case PASS or N/A
@@ -102,6 +114,10 @@ func cmdCert(args []string, configPath string, stdout, stderr io.Writer) int {
 		return exitOK
 	case "run":
 		return cmdCertRun(args[1:], configPath, stdout, stderr)
+	case "report":
+		return cmdCertReport(args[1:], configPath, stdout, stderr)
+	case "verify":
+		return cmdCertVerify(args[1:], configPath, stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, certUsage)
 		return exitOK
@@ -240,5 +256,105 @@ func cmdCertRun(args []string, configPath string, stdout, stderr io.Writer) int 
 	fmt.Fprintln(stdout)
 	cert.WriteSummary(stdout, res)
 	fmt.Fprintf(stdout, "results       : %s\n", dir)
+	if path, m, err := report.Write(dir); err != nil {
+		fmt.Fprintf(stderr, "orderecho: writing the report: %v\n", err)
+	} else {
+		fmt.Fprintf(stdout, "report        : %s (%s)\n", path, m.Verdict)
+	}
 	return res.Exit
+}
+
+// exitTampered: cert verify found a digest that does not match.
+const exitTampered = 9
+
+// runDir resolves a run id or a results directory.
+func runDir(arg, configPath string, stderr io.Writer) (string, bool) {
+	if st, err := os.Stat(filepath.Join(arg, "results.json")); err == nil && !st.IsDir() {
+		return arg, true
+	}
+	cfg, ok := loadConfig(configPath, stderr)
+	if !ok {
+		return "", false
+	}
+	dir := filepath.Join(cfg.Storage.CertsDir, filepath.Base(arg))
+	if _, err := os.Stat(filepath.Join(dir, "results.json")); err != nil {
+		fmt.Fprintf(stderr, "orderecho: no results.json for %q (looked in %s)\n", arg, dir)
+		return "", false
+	}
+	return dir, true
+}
+
+func cmdCertReport(args []string, configPath string, stdout, stderr io.Writer) int {
+	fs := subFlags("cert report", &configPath, stderr)
+	open := fs.Bool("open", false, "open the report in the default browser")
+	pos, err := parseInterleaved(fs, args)
+	if err != nil || len(pos) != 1 {
+		fmt.Fprint(stderr, certUsage)
+		return exitConfig
+	}
+	dir, ok := runDir(pos[0], configPath, stderr)
+	if !ok {
+		return exitConfig
+	}
+	path, m, err := report.Write(dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "orderecho: %v\n", err)
+		return exitFailed
+	}
+	st, _ := os.Stat(path)
+	fmt.Fprintf(stdout, "report : %s (%d bytes)\nverdict: %s — %s\n", path, st.Size(), m.Verdict, m.VerdictReason)
+	if *open {
+		opener := "xdg-open"
+		if runtime.GOOS == "darwin" {
+			opener = "open"
+		}
+		if err := exec.Command(opener, path).Start(); err != nil {
+			fmt.Fprintf(stderr, "orderecho: opening the report: %v\n", err)
+		}
+	}
+	return exitOK
+}
+
+func cmdCertVerify(args []string, configPath string, stdout, stderr io.Writer) int {
+	fs := subFlags("cert verify", &configPath, stderr)
+	pos, err := parseInterleaved(fs, args)
+	if err != nil || len(pos) != 1 {
+		fmt.Fprint(stderr, certUsage)
+		return exitConfig
+	}
+	dir, ok := runDir(pos[0], configPath, stderr)
+	if !ok {
+		return exitConfig
+	}
+	rep, err := cert.Verify(dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "orderecho: %s: %v\n", dir, err)
+		return exitConfig
+	}
+	writeVerify(stdout, rep)
+	if !rep.OK {
+		return exitTampered
+	}
+	return exitOK
+}
+
+func writeVerify(w io.Writer, rep *cert.VerifyReport) {
+	fmt.Fprintf(w, "verifying %s\n", rep.Dir)
+	for _, f := range rep.Files {
+		switch f.Status {
+		case "ok":
+			fmt.Fprintf(w, "  ok          %-28s %s\n", f.Path, f.Got)
+		case "MISMATCH":
+			fmt.Fprintf(w, "  MISMATCH    %-28s recorded %s, now %s\n", f.Path, f.Want, f.Got)
+		case "MISSING":
+			fmt.Fprintf(w, "  MISSING     %-28s recorded %s\n", f.Path, f.Want)
+		default:
+			fmt.Fprintf(w, "  %-11s %-28s %s (never recorded)\n", f.Status, f.Path, f.Got)
+		}
+	}
+	if rep.OK {
+		fmt.Fprintf(w, "intact: %d file(s) match their recorded SHA-256\n", len(rep.Files))
+	} else {
+		fmt.Fprintf(w, "TAMPERED: %d of %d file(s) do not match the record\n", len(rep.Problems()), len(rep.Files))
+	}
 }

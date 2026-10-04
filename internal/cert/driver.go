@@ -71,6 +71,7 @@ type SessionInfo struct {
 	SenderCompID string
 	TargetCompID string
 	HeartbeatSec int
+	Address      string // host:port
 }
 
 // OrderInfo is a runner's view of one order (managed or raw).
@@ -147,7 +148,7 @@ func NewLive(ctx context.Context, a *agent.Agent, hist *History) *Live {
 func (l *Live) Info() SessionInfo {
 	sc := l.A.Opt.Session
 	return SessionInfo{SessionID: sc.ID, FixVersion: sc.FixVersion, SenderCompID: sc.SenderCompID,
-		TargetCompID: sc.TargetCompID, HeartbeatSec: sc.HeartbeatSec}
+		TargetCompID: sc.TargetCompID, HeartbeatSec: sc.HeartbeatSec, Address: sc.Addr()}
 }
 
 func (l *Live) poll() {

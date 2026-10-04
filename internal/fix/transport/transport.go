@@ -55,6 +55,9 @@ type Options struct {
 	// ("out"). Called under the session lock. The cert runner uses it to see
 	// messages the session deliberately ignores (PossDup replays).
 	OnWire func(direction string, msg *codec.Message)
+	// OnWireInjected, when set, is told about every outbound message sent
+	// via SendRaw (injected) just before OnWire sees it.
+	OnWireInjected func(msg *codec.Message)
 }
 
 // Snapshot is a consistent view of the session for callers outside the loop.
@@ -377,6 +380,9 @@ func (in *Initiator) write(s session.Send) {
 	comment := s.Detail
 	if s.Injected && s.Detail != "" {
 		comment = "injected: " + s.Detail
+	}
+	if in.opts.OnWireInjected != nil && s.Msg != nil && s.Injected {
+		in.opts.OnWireInjected(s.Msg)
 	}
 	if in.opts.OnWire != nil && s.Msg != nil {
 		in.opts.OnWire("out", s.Msg)

@@ -178,28 +178,49 @@ func hEmuHold(ctx context.Context, s *Service, c *call) (any, string, *APIError)
 	return s.emuOrderAction(ctx, in.OrderID, "hold", map[string]any{})
 }
 
+// emuSession maps our session id (or the emulator's own) to the emulator's.
+func (s *Service) emuSession(id string) (string, *APIError) {
+	if v, ok := s.cfg.EmulatorSession(id); ok {
+		return v, nil
+	}
+	for _, v := range s.cfg.Emulator.Sessions {
+		if v == id && s.cfg.Emulator.ControlAPI != "" {
+			return v, nil
+		}
+	}
+	var known []string
+	for k, v := range s.cfg.Emulator.Sessions {
+		known = append(known, k+" ("+v+")")
+	}
+	sortStrings(known)
+	return "", apiErr(404, "unknown_session", "sessions backed by the emulator: "+strings.Join(known, ", "), "%q is not a session whose counterparty is the emulator", id)
+}
+
+func hEmuSeqGap(ctx context.Context, s *Service, c *call) (any, string, *APIError) {
+	var in EmuSeqGapArgs
+	if e := c.decode(&in); e != nil {
+		return nil, "", e
+	}
+	emu, e := s.emuSession(in.Session)
+	if e != nil {
+		return nil, "", e
+	}
+	out, e := s.emuCall(ctx, "/sessions/"+url.PathEscape(emu)+"/inject/seq-gap", map[string]any{"skip": in.Skip})
+	if e != nil {
+		return nil, "", e
+	}
+	res := map[string]any{"acted_on": "counterparty emulator (not a real venue)", "emulator_session": emu, "emulator": out}
+	return res, fmt.Sprintf("emulator %s skipped %d outbound sequence number(s); the agent should ask for a resend", emu, in.Skip), nil
+}
+
 func hEmuInject(ctx context.Context, s *Service, c *call) (any, string, *APIError) {
 	var in EmuInjectArgs
 	if e := c.decode(&in); e != nil {
 		return nil, "", e
 	}
-	emu := ""
-	if v, ok := s.cfg.EmulatorSession(in.Session); ok {
-		emu = v
-	} else {
-		for _, v := range s.cfg.Emulator.Sessions {
-			if v == in.Session {
-				emu = v
-			}
-		}
-	}
-	if emu == "" {
-		var known []string
-		for k, v := range s.cfg.Emulator.Sessions {
-			known = append(known, k+" ("+v+")")
-		}
-		sortStrings(known)
-		return nil, "", apiErr(404, "unknown_session", "sessions backed by the emulator: "+strings.Join(known, ", "), "%q is not a session whose counterparty is the emulator", in.Session)
+	emu, e := s.emuSession(in.Session)
+	if e != nil {
+		return nil, "", e
 	}
 	if len(in.Set) == 0 && len(in.Remove) == 0 {
 		return nil, "", apiErr(400, "invalid_arguments", "give set (tag -> value) and/or remove (tags)", "emulator_inject_next changes nothing")

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/danielgavin-code/OrderEcho/internal/report/reporttest"
 )
 
 const tinyConfig = `sessions:
@@ -148,5 +150,50 @@ func TestInstallClaudeDesktop(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(target); string(b) != `{"mcpServers": {` {
 		t.Fatal("invalid file was rewritten")
+	}
+}
+
+// A5: cert report / cert verify from the CLI, on the fixed fixture run.
+func TestCertReportAndVerifyCLI(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, reporttest.RunID)
+	if _, err := reporttest.Build(dir, reporttest.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"cert", "verify", dir}, &out, &errb); code != 0 || !strings.Contains(out.String(), "intact: 5 file(s) match their recorded SHA-256") {
+		t.Fatalf("exit %d\n%s%s", code, out.String(), errb.String())
+	}
+	out.Reset()
+	if code := run([]string{"cert", "report", dir}, &out, &errb); code != 0 || !strings.Contains(out.String(), "verdict: CERTIFIED") {
+		t.Fatalf("exit %d\n%s%s", code, out.String(), errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "report.html")); err != nil {
+		t.Fatal(err)
+	}
+	// One byte of one case's fix.log: exit 9, naming the file.
+	p := filepath.Join(dir, "4.1", "fix.log")
+	data, _ := os.ReadFile(p)
+	data[100] ^= 0x20
+	os.WriteFile(p, data, 0o644)
+	out.Reset()
+	code := run([]string{"cert", "verify", dir}, &out, &errb)
+	if code != exitTampered || !strings.Contains(out.String(), "MISMATCH    4.1/fix.log") || !strings.Contains(out.String(), "TAMPERED: 1 of 5 file(s)") {
+		t.Fatalf("exit %d\n%s", code, out.String())
+	}
+	// By run id, through the config's certs_dir.
+	cfg := filepath.Join(root, "c.yaml")
+	os.WriteFile(cfg, []byte(tinyConfig+"storage: { certs_dir: "+root+" }\n"), 0o644)
+	out.Reset()
+	if code := run([]string{"--config", cfg, "cert", "verify", reporttest.RunID}, &out, &errb); code != exitTampered {
+		t.Fatalf("by id: exit %d %s", code, errb.String())
+	}
+	// A run with no integrity record: not "tampered", a usage-level 2.
+	os.Remove(filepath.Join(dir, "results.sha256"))
+	data, _ = os.ReadFile(filepath.Join(dir, "results.json"))
+	os.WriteFile(filepath.Join(dir, "results.json"), bytes.Replace(data, []byte(`"integrity"`), []byte(`"integrity_x"`), 1), 0o644)
+	errb.Reset()
+	if code := run([]string{"cert", "verify", dir}, &out, &errb); code != exitConfig || !strings.Contains(errb.String(), "no integrity record") {
+		t.Fatalf("unsealed: exit %d %s", code, errb.String())
 	}
 }

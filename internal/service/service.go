@@ -12,6 +12,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +33,8 @@ import (
 	"github.com/danielgavin-code/OrderEcho/internal/config"
 	"github.com/danielgavin-code/OrderEcho/internal/evidence"
 	"github.com/danielgavin-code/OrderEcho/internal/fix/codec"
+	"github.com/danielgavin-code/OrderEcho/internal/fix/session"
+	"github.com/danielgavin-code/OrderEcho/internal/fixview"
 	"github.com/danielgavin-code/OrderEcho/internal/logs"
 	"github.com/danielgavin-code/OrderEcho/internal/order"
 	"github.com/danielgavin-code/OrderEcho/internal/version"
@@ -41,6 +45,7 @@ const (
 	ClientAPI      = "api"
 	ClientMCPStdio = "mcp-stdio"
 	ClientMCPHTTP  = "mcp-http"
+	ClientGUI      = "gui"
 )
 
 // IsMCP reports whether client is one of the MCP front doors.
@@ -110,6 +115,9 @@ type Service struct {
 	cancel  context.CancelFunc
 	started time.Time
 
+	events *hub
+	csrf   string // per-process CSRF token for state-changing requests (A5 §6)
+
 	mu       sync.Mutex
 	sessions map[string]*sessState
 	order    []string
@@ -135,13 +143,27 @@ func New(opt Options) (*Service, error) {
 	s.Log = logs.NewEngineLog(cfg.Logging.LogDir, clk, level, opt.Console)
 	s.ev = evidence.Open(cfg.Storage.EvidenceDir, "service-"+evidence.MakeRunID(time.Now()), clk)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.events = newHub()
+	s.csrf = randomToken()
 	for _, sc := range cfg.Sessions {
 		s.sessions[sc.ID] = &sessState{cfg: sc, ring: newRing(ringSize)}
 		s.order = append(s.order, sc.ID)
 	}
 	s.recoverRuns()
+	go s.watchSessions(s.ctx)
 	return s, nil
 }
+
+func randomToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b)
+}
+
+// CSRFToken is the token the GUI page carries (and API clients fetch).
+func (s *Service) CSRFToken() string { return s.csrf }
 
 // Config is the service's configuration.
 func (s *Service) Config() *config.Config { return s.cfg }
@@ -179,6 +201,8 @@ func (s *Service) Enabled(t *Tool) bool {
 		return s.cfg.MCP.AllowOrders
 	case GroupEmulator:
 		return s.cfg.MCP.AllowEmulatorTools && s.EmulatorToolsAvailable()
+	case GroupAPIOnly:
+		return false
 	}
 	return true
 }
@@ -203,6 +227,8 @@ func (s *Service) Dispatch(ctx context.Context, client, name string, raw json.Ra
 	prefix := "API "
 	if IsMCP(client) {
 		prefix = "MCP "
+	} else if client == ClientGUI {
+		prefix = "GUI "
 	}
 	outcome := resp.Summary
 	if resp.Error != nil {
@@ -229,6 +255,9 @@ func (s *Service) dispatch(ctx context.Context, client, name string, raw json.Ra
 	}
 	if IsMCP(client) && !s.Enabled(t) {
 		why := "mcp.allow_orders is false in the agent config"
+		if t.Group == GroupAPIOnly {
+			why = "it is an HTTP API operation (the GUI's), not an MCP tool"
+		}
 		if t.Group == GroupEmulator {
 			why = "emulator tools need emulator.control_api in the agent config and mcp.allow_emulator_tools: true"
 		}
@@ -435,7 +464,9 @@ func (s *Service) connect(st *sessState, reset bool) (*conn, *APIError) {
 	sc := st.cfg
 	hist := cert.NewHistory(clock.SystemClock{})
 	c := &conn{since: time.Now()}
+	var injected *codec.Message
 	a, err := agent.New(agent.Options{Config: s.cfg, Session: sc, Clock: clock.SystemClock{}, RunID: s.newRunID(),
+		OnWireInjected: func(m *codec.Message) { injected = m },
 		OnWire: func(dir string, m *codec.Message) {
 			hist.Add(dir, m)
 			st.ring.add(dir, m)
@@ -446,7 +477,9 @@ func (s *Service) connect(st *sessState, reset bool) (*conn, *APIError) {
 				c.lastOut = time.Now()
 			}
 			c.mu.Unlock()
-		}})
+			s.publishMessage(sc, dir, m, m == injected)
+		},
+		OnEvidence: func(e session.Evidence) { s.publishEvidence(sc.ID, e) }})
 	if err != nil {
 		return nil, apiErr(500, "agent_error", "check the storage and log directories in the agent config", "cannot build the agent for %s: %v", sc.ID, err)
 	}
@@ -585,3 +618,41 @@ func writeJSON(path string, v any) error {
 }
 
 var errNotFound = errors.New("not found")
+
+// ------------------------------------------------------------ live events
+
+// MessageEvent is the data of a "message" event.
+type MessageEvent struct {
+	SessionID string `json:"session_id"`
+	DecodedMessage
+	Line    string   `json:"line"`
+	ClOrdID string   `json:"cl_ord_id,omitempty"`
+	Flags   []string `json:"flags"`
+}
+
+func (s *Service) publishMessage(sc config.Session, dir string, m *codec.Message, injected bool) {
+	p := profileFor(sc.FixVersion)
+	ev := MessageEvent{SessionID: sc.ID, DecodedMessage: decodeMessage(wireMsg{TS: time.Now(), Dir: dir, Msg: m}, p),
+		Line: fixview.Line(p, m.MsgType(), m.Get), ClOrdID: m.Value(11), Flags: fixview.Flags(m.Get)}
+	if injected {
+		ev.Flags = append(ev.Flags, "INJECTED")
+	}
+	if ev.Flags == nil {
+		ev.Flags = []string{}
+	}
+	s.events.publish(EvMessage, ev)
+}
+
+// publishEvidence turns the session's own evidence into live events: order
+// reports (with the order's shadow state and checks) and discarded frames.
+func (s *Service) publishEvidence(sessionID string, e session.Evidence) {
+	switch {
+	case e.Event == "order report":
+		s.events.publish(EvOrder, map[string]any{"session_id": sessionID, "line": e.Detail, "order": e.Order})
+	case strings.HasPrefix(e.Event, "check "):
+		s.events.publish(EvOrder, map[string]any{"session_id": sessionID, "line": e.Detail, "check_change": strings.TrimPrefix(e.Event, "check ")})
+	case e.Event == "frame discarded":
+		s.events.publish(EvMessage, MessageEvent{SessionID: sessionID, DecodedMessage: DecodedMessage{TS: stamp(time.Now()), Direction: "disc",
+			MsgTypeName: "discarded frame", Summary: e.Detail, Fields: []DecodedField{}}, Line: "discarded frame: " + e.Detail, Flags: []string{"BAD-FRAMING"}})
+	}
+}
